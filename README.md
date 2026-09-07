@@ -136,13 +136,16 @@ frame — same failure mode as the old per-icon override this replaced.
 
 ## Embers
 
-While a face's mouth is open, it breathes a small shower of glowing embers —
-a plain particle system (`spawnEmber`/`updateEmbers`/`drawEmbers`), one pool
-per face, living in that face's own local unit-space so the particles ride
-along with its position, rotation and scale for free. Spawn rate and count
-scale with `jawOpen`; a closed mouth (`jaw ≤ 0.15`, the same cutoff the shape
-quantiser uses) emits nothing and any embers already in flight simply finish
-their `EMBER_LIFE` and stop being replaced.
+While a face's mouth is open, it jets a small shower of glowing embers
+downward off the chin — a plain particle system
+(`spawnEmber`/`updateEmbers`/`drawEmbers`), one pool per face, living in that
+face's own local unit-space so the particles ride along with its position,
+rotation and scale for free. Spawn rate and count scale with `jawOpen`; a
+closed mouth (`jaw ≤ 0.15`, the same cutoff the shape quantiser uses) emits
+nothing and any embers already in flight simply finish their `EMBER_LIFE` and
+stop being replaced. `vy` accelerates downward over each particle's life
+(`p.vy += 0.5*dt`) rather than easing off, so the jet keeps falling rather
+than drifting to a stop mid-air.
 
 **Drawn on top of the base plate, not behind it**, despite the brief calling
 for embers "behind the face" — the opaque plate is nearly as large as the
@@ -179,6 +182,13 @@ detections become new tracks. The HUD detail rows show whichever tracked face
 is currently widest (closest to camera); the state line just says how many
 there are.
 
+**Draw order is smallest-first.** The canvas has no other depth cue, so size
+stands in for distance from camera: `paint()` draws off a copy of `faces`
+sorted by `fs.w` rather than `faces` itself (whose own order is what
+`updateFaces` matches against next frame — sorting it in place would fight
+that), so a bigger, nearer-reading mask overlaps and hides smaller ones
+instead of tracking order deciding who's on top.
+
 ## Tracking style
 
 Settings has a 4-way **Tracking style** control (`S.motion`) for how a mask
@@ -210,7 +220,7 @@ forehead/chin), which is cheap and doesn't need a second model output.
 
 ## Mask size
 
-Settings has a **Mask size** slider (50–150%, `S.maskScale`) that multiplies
+Settings has a **Mask size** slider (50–400%, `S.maskScale`) that multiplies
 the automatic face-width fit — 100% is the calibrated default. Persisted in
 `localStorage`.
 

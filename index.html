@@ -226,6 +226,20 @@ body.tracking .hud-state::before{background:var(--mint)}
   font-size:17px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;
 }
 .group.callout .hint{font-size:16px;line-height:1.5;color:var(--black)}
+
+/* Never styled before — was rendering at the browser's tiny native default
+   width instead of filling the sheet. */
+input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:48px;background:none;
+  margin:0;display:block;touch-action:none;
+}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--outline-var)}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:20px;height:20px;border-radius:50%;margin-top:-8px;
+  background:var(--primary);border:0;
+}
+input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:var(--outline-var)}
+input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:var(--primary);border:0}
 .callout-links{display:flex;flex-wrap:wrap;gap:8px 18px;margin:14px 0 0}
 .callout-links a{
   font-size:15px;font-weight:600;color:var(--black);
@@ -393,7 +407,11 @@ body.tracking .hud-state::before{background:var(--mint)}
   swaps its eyes, brows and mouth for different carved shapes depending on what your face
   is actually doing. Blink, scowl, shout.</p>
 
-  <div class="group">
+  <div class="group" hidden>
+    <!-- Duplicate of the floating "Readout" pill on the camera view, which
+         already toggles the same S.hud — hidden rather than removed, so
+         segHud stays live for applyHud()'s press() call and anyone can
+         unhide this instead of rebuilding it. -->
     <div class="label"><span>Readout</span></div>
     <div class="seg" id="segHud" role="group" aria-label="Readout">
       <button data-hud="on" aria-pressed="true">Show</button>
@@ -415,7 +433,7 @@ body.tracking .hud-state::before{background:var(--mint)}
 
   <div class="group">
     <div class="label"><span>Mask size</span><output id="oScale">100%</output></div>
-    <input type="range" id="sScale" min="50" max="150" step="5" value="100" aria-label="Mask size">
+    <input type="range" id="sScale" min="50" max="400" step="10" value="100" aria-label="Mask size">
     <p class="hint" style="margin:8px 0 0">Scales the mask on top of the automatic fit to your face width.</p>
   </div>
 
@@ -531,7 +549,7 @@ const seenSplash = () => { try{ return !!localStorage.getItem(SEEN_KEY); } catch
 const markSeen   = () => { try{ localStorage.setItem(SEEN_KEY,'1'); } catch(e){} };
 const loadHud    = () => { try{ return localStorage.getItem(HUD_KEY) !== '0'; } catch(e){ return true; } };
 const saveHud    = v => { try{ localStorage.setItem(HUD_KEY, v ? '1' : '0'); } catch(e){} };
-const loadScale  = () => { try{ const v = +localStorage.getItem(SCALE_KEY); return v >= 0.5 && v <= 1.5 ? v : 1; } catch(e){ return 1; } };
+const loadScale  = () => { try{ const v = +localStorage.getItem(SCALE_KEY); return v >= 0.5 && v <= 4 ? v : 1; } catch(e){ return 1; } };
 const saveScale  = v => { try{ localStorage.setItem(SCALE_KEY, String(v)); } catch(e){} };
 const loadMotion = () => { try{ const v = localStorage.getItem(MOTION_KEY); return MOTION_STYLES[v] ? v : 'lag'; } catch(e){ return 'lag'; } };
 const saveMotion = v => { try{ localStorage.setItem(MOTION_KEY, v); } catch(e){} };
@@ -1070,10 +1088,10 @@ const EMBER_CORE = '#FFF6D6';            /* hot centre every ember fades from, r
 
 function spawnEmber(fs){
   fs.embers.push({
-    x: (Math.random()-0.5)*0.10,
-    y: LAYOUT.mouthY - 0.02,
-    vx: (Math.random()-0.5)*0.18,
-    vy: -(0.35 + Math.random()*0.35),
+    x: (Math.random()-0.5)*0.07,
+    y: LAYOUT.mouthY + 0.02,
+    vx: (Math.random()-0.5)*0.10,
+    vy: 0.5 + Math.random()*0.4,
     life: 0,
     maxLife: EMBER_LIFE[0] + Math.random()*(EMBER_LIFE[1]-EMBER_LIFE[0]),
     size: 0.022 + Math.random()*0.03,
@@ -1097,8 +1115,8 @@ function updateEmbers(fs, dt){
     p.life += dt;
     if (p.life >= p.maxLife){ fs.embers.splice(i,1); continue; }
     p.x += p.vx*dt; p.y += p.vy*dt;
-    p.vx += (Math.random()-0.5)*0.6*dt;   /* turbulence */
-    p.vy -= 0.15*dt;                       /* embers speed up as they rise, like real heat */
+    p.vx += (Math.random()-0.5)*0.4*dt;   /* turbulence — narrower than the old rising smoke, more a jet than a drift */
+    p.vy += 0.5*dt;                        /* falls faster the further it drops, like gravity taking over */
   }
 }
 
@@ -1127,8 +1145,14 @@ function drawEmbers(ctx, fs){
   ctx.restore();
 }
 
+/* Smallest-first so a larger (nearer) mask paints over and hides whatever
+   smaller ones fall behind it — draw order is the only depth cue this
+   canvas has, so size stands in for distance from camera. A sorted copy,
+   not an in-place sort: `faces`' own order is meaningful elsewhere (it's
+   what `updateFaces` iterates when matching next frame's detections). */
 function paint(ctx){
-  for (const fs of faces) paintOne(ctx, fs);
+  const order = [...faces].sort((a,b) => a.w - b.w);
+  for (const fs of order) paintOne(ctx, fs);
 }
 
 function paintOne(ctx, fs){
@@ -1412,7 +1436,7 @@ $('segHud').addEventListener('click', e => {
 });
 
 $('sScale').addEventListener('input', e => {
-  S.maskScale = clamp(+e.target.value, 50, 150)/100;
+  S.maskScale = clamp(+e.target.value, 50, 400)/100;
   saveScale(S.maskScale);
   $('oScale').textContent = e.target.value + '%';
 });
