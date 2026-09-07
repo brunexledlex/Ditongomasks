@@ -6,11 +6,11 @@
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Ditongo Masks">
+<meta name="apple-mobile-web-app-title" content="Monos">
 <meta name="description" content="An AR experiment with illustration — a tribal mask that reads your face and redraws itself.">
-<link rel="icon" href="./Assets/icon-192.png" type="image/png">
-<link rel="apple-touch-icon" href="./Assets/apple-touch-icon.png">
-<title>Ditongo Masks</title>
+<link rel="icon" href="./Assets/Favicons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="./Assets/Favicons/apple-touch-icon.png">
+<title>Monos</title>
 <style>
 /* ─────────────────────────────────────────────────────────────
    Tokens. Inherited from SPLIIIT so the two apps read as one
@@ -361,7 +361,7 @@ body.tracking .hud-state::before{background:var(--mint)}
 </div>
 
 <div id="topbar">
-  <span class="wordmark" role="img" aria-label="Ditongo Masks">DITONGO<b>MASKS</b></span>
+  <span class="wordmark" role="img" aria-label="Monos"><b>MONOS</b></span>
   <div class="top-actions">
     <button class="icon-btn" id="btnFlip" aria-label="Switch camera"></button>
     <button class="icon-btn" id="btnTune" aria-label="Settings"></button>
@@ -389,7 +389,7 @@ body.tracking .hud-state::before{background:var(--mint)}
 <div class="sheet" id="sheetTune" role="dialog" aria-modal="true" aria-label="Settings">
   <div class="grabber"></div>
   <h2>Hello!</h2>
-  <p class="hint"><b>Ditongo Masks</b> paints a symmetrical tribal mask over your face and
+  <p class="hint"><b>Monos</b> paints a symmetrical tribal mask over your face and
   swaps its eyes, brows and mouth for different carved shapes depending on what your face
   is actually doing. Blink, scowl, shout.</p>
 
@@ -400,6 +400,23 @@ body.tracking .hud-state::before{background:var(--mint)}
       <button data-hud="off">Hide</button>
     </div>
     <p class="hint" style="margin:8px 0 0">The live blendshape scores and which carved shape each one has selected.</p>
+  </div>
+
+  <div class="group">
+    <div class="label"><span>Tracking style</span></div>
+    <div class="seg" id="segMotion" role="group" aria-label="Tracking style">
+      <button data-motion="none">None</button>
+      <button data-motion="lag" aria-pressed="true">Laggy</button>
+      <button data-motion="spring">Springy</button>
+      <button data-motion="stepped">Jerky</button>
+    </div>
+    <p class="hint" style="margin:8px 0 0">How the mask catches up to your head — cartoon-clumsy instead of tightly locked on.</p>
+  </div>
+
+  <div class="group">
+    <div class="label"><span>Mask size</span><output id="oScale">100%</output></div>
+    <input type="range" id="sScale" min="50" max="150" step="5" value="100" aria-label="Mask size">
+    <p class="hint" style="margin:8px 0 0">Scales the mask on top of the automatic fit to your face width.</p>
   </div>
 
   <div class="group">
@@ -414,8 +431,9 @@ body.tracking .hud-state::before{background:var(--mint)}
 
   <div class="group callout">
     <div class="label"><span>An AR experiment</span></div>
-    <p class="hint">Face landmarks come from MediaPipe, the mask is drawn procedurally on a
-    canvas — no image files, no build step. Design and direction by Bruno Silva.</p>
+    <p class="hint">Face landmarks come from MediaPipe. The mask layers painted artwork over
+    your face, with a procedural fallback for any expression that doesn't have art yet — no
+    build step, one file. Design and direction by Bruno Silva.</p>
     <p class="callout-links"><a id="lnkSite" href="https://ditongo.com" target="_blank" rel="noopener">ditongo.com</a></p>
   </div>
 
@@ -438,7 +456,7 @@ body.tracking .hud-state::before{background:var(--mint)}
 
 <div id="splash" hidden role="dialog" aria-modal="true" aria-labelledby="splashMark" aria-describedby="splashDesc">
   <div class="splash-card">
-    <span class="splash-mark" id="splashMark">DITONGO<b style="font-weight:400">MASKS</b></span>
+    <span class="splash-mark" id="splashMark">MONOS</span>
     <p class="splash-tagline">An AR experiment with illustration.</p>
     <p class="splash-desc" id="splashDesc">A carved mask tracks your face and rebuilds itself
     from what your face is doing. Needs the camera — video is processed on your device and
@@ -480,15 +498,13 @@ $('rollX').innerHTML = svg('close');
 $('lnkSite').insertAdjacentHTML('beforeend', svg('open_in_new'));
 
 /* ── State ────────────────────────────────────────────────────────── */
-const S = { hud:true, facing:'user' };
+const S = { hud:true, facing:'user', maskScale:1, motion:'lag' };
 const src = { w:0, h:0, mirror:true, stream:null, ready:false };
 
 let W = 0, H = 0;                 /* overlay backing-store size */
 let landmarker = null;
 let lastVideoTime = -1;
-let face = null;                  /* smoothed pose, or null when untracked */
-let shapes = { eyes:'eye_triangle', brows:'brow_flat', mouth:'mouth_diamond' };
-let scores = { blink:0, wide:0, browDown:0, browUp:0, jaw:0, smile:0 };
+let faces = [];                   /* one tracked pose+shapes+scores object per face on screen */
 let busy = false;
 
 const vid = $('vid'), mask = $('mask'), mx = mask.getContext('2d');
@@ -506,6 +522,8 @@ function snack(msg, ms = 2600){
 const SHOTS_KEY = 'ditongomasks-shots';
 const SEEN_KEY  = 'ditongomasks-seen';
 const HUD_KEY   = 'ditongomasks-hud';
+const SCALE_KEY  = 'ditongomasks-scale';
+const MOTION_KEY = 'ditongomasks-motion';
 
 const loadShots = () => { try{ return JSON.parse(localStorage.getItem(SHOTS_KEY)) || []; } catch(e){ return []; } };
 const writeShots = a => { try{ localStorage.setItem(SHOTS_KEY, JSON.stringify(a)); return true; } catch(e){ return false; } };
@@ -513,6 +531,10 @@ const seenSplash = () => { try{ return !!localStorage.getItem(SEEN_KEY); } catch
 const markSeen   = () => { try{ localStorage.setItem(SEEN_KEY,'1'); } catch(e){} };
 const loadHud    = () => { try{ return localStorage.getItem(HUD_KEY) !== '0'; } catch(e){ return true; } };
 const saveHud    = v => { try{ localStorage.setItem(HUD_KEY, v ? '1' : '0'); } catch(e){} };
+const loadScale  = () => { try{ const v = +localStorage.getItem(SCALE_KEY); return v >= 0.5 && v <= 1.5 ? v : 1; } catch(e){ return 1; } };
+const saveScale  = v => { try{ localStorage.setItem(SCALE_KEY, String(v)); } catch(e){} };
+const loadMotion = () => { try{ const v = localStorage.getItem(MOTION_KEY); return MOTION_STYLES[v] ? v : 'lag'; } catch(e){ return 'lag'; } };
+const saveMotion = v => { try{ localStorage.setItem(MOTION_KEY, v); } catch(e){} };
 
 /* A full-frame PNG data URL is 0.5–2MB and localStorage is a ~5MB budget
    for the whole origin, so the cap has to be on bytes as well as count,
@@ -551,8 +573,10 @@ const T = {
 
 /* The mask is symmetrical, so a single shape has to answer for both sides:
    the stronger of left/right drives it, which is also what makes a
-   one-eyed wink read as a blink rather than as nothing. */
-function quantize(b){
+   one-eyed wink read as a blink rather than as nothing. Pure: every face
+   needs its own scores/shapes, so this hands both back rather than writing
+   to shared state. */
+function rawShapes(b){
   const blink    = Math.max(b.eyeBlinkLeft || 0, b.eyeBlinkRight || 0);
   const wide     = Math.max(b.eyeWideLeft  || 0, b.eyeWideRight  || 0);
   const browDown = Math.max(b.browDownLeft || 0, b.browDownRight || 0);
@@ -560,19 +584,39 @@ function quantize(b){
   const jaw      = b.jawOpen || 0;
   const smile    = Math.max(b.mouthSmileLeft || 0, b.mouthSmileRight || 0);
 
-  scores = { blink, wide, browDown, browUp, jaw, smile };
-
-  shapes = {
-    eyes:  blink > T.eyeBlink ? 'eye_circle'
-         : wide  > T.eyeWide  ? 'eye_square'
-         : 'eye_triangle',
-    brows: browDown > T.browDown ? 'brow_angry'
-         : browUp   > T.browUp   ? 'brow_arch'
-         : 'brow_flat',
-    mouth: jaw > T.jawWide ? 'mouth_hexagon'
-         : jaw > T.jawMid  ? 'mouth_oval'
-         : 'mouth_diamond',
+  return {
+    scores: { blink, wide, browDown, browUp, jaw, smile },
+    shapes: {
+      eyes:  blink > T.eyeBlink ? 'eye_circle'
+           : wide  > T.eyeWide  ? 'eye_square'
+           : 'eye_triangle',
+      brows: browDown > T.browDown ? 'brow_angry'
+           : browUp   > T.browUp   ? 'brow_arch'
+           : 'brow_flat',
+      mouth: jaw > T.jawWide ? 'mouth_hexagon'
+           : jaw > T.jawMid  ? 'mouth_oval'
+           : 'mouth_diamond',
+    },
   };
+}
+
+/* A cartoon character's face lags its own expression a beat rather than
+   snapping the instant a threshold is crossed. A new candidate has to hold
+   for SHAPE_DELAY straight seconds before it commits to `fs.shapes`;
+   anything shorter (crossing back before the hold completes) is discarded,
+   so a score sitting right on a threshold doesn't flicker. `fs` is one
+   face's own tracked state — see `newFaceState`. */
+const SHAPE_DELAY = 0.2;
+
+function quantize(fs, b, dt=1/60){
+  const { scores, shapes: candidate } = rawShapes(b);
+  fs.scores = scores;
+  for (const k of ['eyes','brows','mouth']){
+    if (candidate[k] === fs.shapes[k]){ fs.pending[k] = null; fs.pendingT[k] = 0; continue; }
+    if (candidate[k] !== fs.pending[k]){ fs.pending[k] = candidate[k]; fs.pendingT[k] = 0; }
+    fs.pendingT[k] += dt;
+    if (fs.pendingT[k] >= SHAPE_DELAY){ fs.shapes[k] = fs.pending[k]; fs.pending[k] = null; fs.pendingT[k] = 0; }
+  }
 }
 
 /* ── Tribal palette ───────────────────────────────────────────────────
@@ -583,38 +627,64 @@ const TRIBE = {
   blood:'#8C2318', jade:'#1F8A70', indigo:'#2B3A67', ink:'#12100E',
 };
 
-/* ── Asset map ────────────────────────────────────────────────────────
-   Every carved feature is procedural by default so the app runs with no
-   image files at all. Point `src` at a local PNG/SVG to override one —
-   it is drawn into the same unit box the procedural version uses, so
-   nothing else has to change. */
-const ASSETS = {
-  base:          { src:null, w:1.00, h:1.18 },
-  eye_triangle:  { src:null, w:0.20, h:0.17 },
-  eye_circle:    { src:null, w:0.20, h:0.20 },
-  eye_square:    { src:null, w:0.20, h:0.20 },
-  brow_flat:     { src:null, w:0.26, h:0.07 },
-  brow_angry:    { src:null, w:0.26, h:0.12 },
-  brow_arch:     { src:null, w:0.26, h:0.12 },
-  mouth_diamond: { src:null, w:0.34, h:0.16 },
-  mouth_oval:    { src:null, w:0.34, h:0.22 },
-  mouth_hexagon: { src:null, w:0.40, h:0.34 },
+/* ── Painted layers ───────────────────────────────────────────────────
+   Real artwork (Assets/Mascaras/) replaces the procedural drawing for
+   whichever blendshape states have a matching file, keyed by the exact
+   same state names `shapes` uses — so dropping in one more PNG for e.g.
+   `eye_circle` is a one-line addition below with nothing else to touch,
+   and every state without a file keeps using the vector fallback in
+   `DRAW`. Coordinates are the artist's native pixels on the shared
+   1916×1701 head canvas: every layer was exported from one artboard at
+   that width, so no per-layer scaling or horizontal centring is needed —
+   only a vertical offset, measured once (see README) by matching the
+   layer's own content against features baked into the head art (the eye
+   sockets gave a pixel-exact fit; brow/mouth are close visual matches). */
+const HEAD_ANCHOR = { x:958, y:803 };   /* the head art's own "nose tip", in its native px */
+const HEAD_UNIT = 875;                  /* head-art px per 1 tracked face-width unit */
+
+/* Assets live under a per-skin folder so a future alternate mask design can
+   sit alongside this one and be swapped in by changing only this path. */
+const SET = './Assets/Mascaras/Set 1/';
+
+const HEAD_ART = { src:SET+'cabeca_A_1.png', w:1916, h:1701, x:0, y:0 };
+const ART = {
+  brow_flat:     { src:SET+'sobrancelha_A_1.png',     w:1916, h:296, x:0, y:48 },
+  eye_triangle:  { src:SET+'olhos_A_1.png',           w:1910, h:473, x:3, y:309 },
+  eye_circle:    { src:SET+'olhos_fechados_A_1.png',  w:1910, h:286, x:3, y:466 },
+  mouth_diamond: { src:SET+'boca_A_1.png',            w:1916, h:381, x:0, y:1060 },
+  /* Second mouth art: thinner/flatter than the resting boca_A, so it takes
+     the mid-open threshold rather than the neutral one — see README for why
+     this mapping (not obvious from the art alone) and how to change it. */
+  mouth_oval:    { src:SET+'boca_B_1.png',            w:1916, h:381, x:0, y:1069 },
 };
 
-const imgs = new Map();
-function assetImage(key){
-  const a = ASSETS[key];
-  if (!a || !a.src) return null;
-  let e = imgs.get(key);
+/* Full-width bands already contain both the left and right feature, so —
+   unlike the procedural shapes below — a painted layer is drawn once,
+   never mirrored. */
+const artImgs = new Map();
+function artImage(entry){
+  if (!entry) return null;
+  let e = artImgs.get(entry.src);
   if (!e){
     e = { img:new Image(), ok:false };
     e.img.decoding = 'async';
     e.img.onload = () => { e.ok = true; };
     e.img.onerror = () => { e.ok = false; };   /* silently falls back to procedural */
-    e.img.src = a.src;
-    imgs.set(key, e);
+    e.img.src = entry.src;
+    artImgs.set(entry.src, e);
   }
   return e.ok ? e.img : null;
+}
+function drawArt(ctx, entry){
+  const img = artImage(entry);
+  if (!img) return false;
+  ctx.drawImage(img,
+    (entry.x - HEAD_ANCHOR.x)/HEAD_UNIT, (entry.y - HEAD_ANCHOR.y)/HEAD_UNIT,
+    entry.w/HEAD_UNIT, entry.h/HEAD_UNIT);
+  return true;
+}
+function drawBase(ctx){
+  if (!drawArt(ctx, HEAD_ART)) DRAW.base(ctx);   /* while loading, or if it fails to load */
 }
 
 /* Where each feature sits, in face-width units from the nose tip. */
@@ -791,23 +861,14 @@ const DRAW = {
   },
 };
 
-function drawAsset(ctx, key){
-  const img = assetImage(key);
-  if (img){
-    const a = ASSETS[key];
-    ctx.drawImage(img, -a.w/2, -a.h/2, a.w, a.h);
-    return;
-  }
-  DRAW[key](ctx);
-}
-
-/* Draw one feature on both sides of the nose bridge. The right-hand copy
-   is a true mirror (scale(-1,1)), not a second placement, so the two can
-   never drift apart. */
+/* Draw one procedural feature on both sides of the nose bridge. The
+   right-hand copy is a true mirror (scale(-1,1)), not a second placement,
+   so the two can never drift apart. Only the vector fallback needs this —
+   a painted layer already contains both sides in one file. */
 function drawMirrored(ctx, key, x, y){
   for (const s of [1,-1]){
     ctx.save(); ctx.translate(s*x, y); ctx.scale(s,1);
-    drawAsset(ctx, key);
+    DRAW[key](ctx);
     ctx.restore();
   }
 }
@@ -823,13 +884,63 @@ function mapPoint(p){
   return { x:(W-dw)/2 + nx*dw, y:(H-dh)/2 + p.y*dh };
 }
 
-/* Raw landmarks jitter by a pixel or two every frame, which on a mask that
-   is 400px wide reads as a shiver. One EMA on the three pose numbers is
-   enough to settle it without visible lag. */
-const SMOOTH = 0.35;
-const ema = (prev, next) => prev == null ? next : prev + (next - prev)*SMOOTH;
+/* ── Tracking style ───────────────────────────────────────────────────
+   Four ways to chase the raw landmark target, all expressed against wall-
+   clock time (not per-frame) so the feel doesn't change with frame rate.
+   `lag`/`spring` share one shape: mutate `face[key]` toward `target` each
+   call. `none`/`stepped` mutate the whole object at once, so they're called
+   directly from `applyTarget()` rather than per-axis. */
+const MOTION_TAU = 0.35;              /* lag: seconds to mostly settle */
+const SPRING_FREQ = 3.2, SPRING_ZETA = 0.32;  /* spring: underdamped on purpose — it should overshoot */
+const STEP_HOLD = 0.15;               /* stepped: seconds held between snaps */
 
-function pose(lm){
+function lagAxis(face, key, vkey, target, dt){
+  const k = 1 - Math.exp(-dt/MOTION_TAU);
+  face[key] += (target - face[key])*k;
+}
+function springAxis(face, key, vkey, target, dt){
+  /* Semi-implicit (symplectic) Euler: velocity is updated from the OLD
+     position, then position from the NEW velocity. Plain (explicit) Euler
+     on a spring this stiff blows up under a big dt; this form stays stable
+     even across a janky frame, just rings a little harder. */
+  const omega = 2*Math.PI*SPRING_FREQ;
+  const K = omega*omega, D = 2*SPRING_ZETA*omega;
+  const acc = (target - face[key])*K - face[vkey]*D;
+  face[vkey] += acc*dt;
+  face[key]  += face[vkey]*dt;
+}
+const MOTION_STYLES = {
+  /* The original tight tracking, kept as an explicit option rather than a
+     removed default — snaps straight to the raw target every frame. */
+  none(face, t, dt){
+    face.x = t.x; face.y = t.y; face.w = t.w; face.roll = t.roll;
+  },
+  lag(face, t, dt){
+    for (const k of ['x','y','w','roll']) lagAxis(face, k, null, t[k], dt);
+  },
+  spring(face, t, dt){
+    for (const k of ['x','y','w','roll']) springAxis(face, k, 'v'+k, t[k], dt);
+  },
+  stepped(face, t, dt){
+    face.stepT += dt;
+    if (face.stepT < STEP_HOLD) return;
+    face.stepT = 0;
+    face.x = t.x; face.y = t.y; face.w = t.w; face.roll = t.roll;
+  },
+};
+
+/* Raw landmarks jitter by a pixel or two every frame, which on a mask that
+   is 400px wide reads as a shiver — the yaw/pitch proxies below get their
+   own fixed light smoothing regardless of S.motion, since a "clumsy" head
+   is a deliberate style choice but a shimmering parallax layer is just a
+   bug. */
+const PAR_SMOOTH = 0.25;
+
+/* Pure: raw pose target for one detected face, before any smoothing or
+   identity is attached. Used both to update an already-tracked face and,
+   in `updateFaces`, to decide which existing track a detection belongs to
+   in the first place. */
+function rawTarget(lm){
   const nose = mapPoint(lm[1]);
   const a = mapPoint(lm[234]), b = mapPoint(lm[454]);
   const width = Math.hypot(b.x - a.x, b.y - a.y);
@@ -843,31 +954,219 @@ function pose(lm){
   if (roll >  Math.PI/2) roll -= Math.PI;
   if (roll < -Math.PI/2) roll += Math.PI;
 
-  if (!face) face = { x:nose.x, y:nose.y, w:width, roll };
-  else {
-    face.x = ema(face.x, nose.x);
-    face.y = ema(face.y, nose.y);
-    face.w = ema(face.w, width);
-    /* Interpolate the angle the short way round so ±90° doesn't spin. */
-    let d = roll - face.roll;
-    if (d >  Math.PI/2) d -= Math.PI;
-    if (d < -Math.PI/2) d += Math.PI;
-    face.roll += d*SMOOTH;
+  /* Yaw/pitch stand-ins for the parallax effect, from landmark asymmetry
+     rather than MediaPipe's facial transformation matrix: turning the head
+     foreshortens the near cheek toward the nose and leaves the far one
+     relatively put, and the same trick works vertically against the
+     forehead/chin. Good enough for "a bit of depth", not a real head pose. */
+  const dCheekA = Math.hypot(nose.x-a.x, nose.y-a.y), dCheekB = Math.hypot(nose.x-b.x, nose.y-b.y);
+  const yaw = (dCheekB-dCheekA)/(dCheekA+dCheekB || 1);
+  const fh = mapPoint(lm[10]), chin = mapPoint(lm[152]);
+  const dFh = Math.hypot(nose.x-fh.x, nose.y-fh.y), dChin = Math.hypot(nose.x-chin.x, nose.y-chin.y);
+  const pitch = (dChin-dFh)/(dFh+dChin || 1);
+
+  return { x:nose.x, y:nose.y, w:width, roll, yaw, pitch };
+}
+
+/* A freshly-detected face — one full copy of everything that used to be
+   module-level singletons (pose, motion-integrator velocity, blendshape
+   scores/shapes, the shape-commit debounce). `id` is only for the test
+   handle; matching in `updateFaces` is by position, not identity. */
+function newFaceState(t, id){
+  return {
+    id, x:t.x, y:t.y, w:t.w, roll:t.roll, yaw:t.yaw, pitch:t.pitch,
+    vx:0, vy:0, vw:0, vroll:0, stepT:0,
+    shapes:  { eyes:'eye_triangle', brows:'brow_flat', mouth:'mouth_diamond' },
+    scores:  { blink:0, wide:0, browDown:0, browUp:0, jaw:0, smile:0 },
+    pending: { eyes:null, brows:null, mouth:null },
+    pendingT:{ eyes:0, brows:0, mouth:0 },
+    embers:[], emberT:0,
+  };
+}
+
+/* Advance one already-tracked face toward this frame's raw target. */
+function applyTarget(fs, t, dt){
+  fs.yaw   += (t.yaw  -fs.yaw)  *PAR_SMOOTH;
+  fs.pitch += (t.pitch-fs.pitch)*PAR_SMOOTH;
+
+  /* Interpolate the angle the short way round so ±90° doesn't spin — done
+     once here, against a reachable target, rather than inside every motion
+     style. */
+  let d = t.roll - fs.roll;
+  if (d >  Math.PI/2) d -= Math.PI;
+  if (d < -Math.PI/2) d += Math.PI;
+
+  (MOTION_STYLES[S.motion] || MOTION_STYLES.lag)(fs, { x:t.x, y:t.y, w:t.w, roll:fs.roll+d }, dt);
+}
+
+/* ── Multi-face tracking ─────────────────────────────────────────────
+   MediaPipe hands back an array of detections per frame with no identity
+   across frames — index 0 this frame isn't necessarily the same person as
+   index 0 last frame. So each existing track claims its nearest unclaimed
+   detection (greedy, by raw screen distance); a track nobody claims is
+   dropped outright rather than held over, matching the old single-face
+   behaviour of `face = null` the instant tracking is lost. Left-over
+   detections become new tracks, up to MAX_FACES. */
+const MAX_FACES = 4;
+const MATCH_MAX_DIST = 0.7;    /* in the existing track's own face-widths */
+let nextFaceId = 1;
+
+function updateFaces(landmarksArr, blendshapesArr, dt){
+  const targets = landmarksArr.map(rawTarget);
+  const usedTarget = new Array(targets.length).fill(false);
+  const kept = [];
+
+  for (const fs of faces){
+    let best = -1, bestD = Infinity;
+    for (let j=0;j<targets.length;j++){
+      if (usedTarget[j]) continue;
+      const d = Math.hypot(targets[j].x-fs.x, targets[j].y-fs.y);
+      if (d < bestD){ bestD = d; best = j; }
+    }
+    if (best < 0 || bestD > fs.w*MATCH_MAX_DIST) continue;   /* unmatched — dropped */
+    usedTarget[best] = true;
+    applyTarget(fs, targets[best], dt);
+    const cats = blendshapesArr[best] && blendshapesArr[best].categories;
+    if (cats){
+      const b = Object.create(null);
+      for (const c of cats) b[c.categoryName] = c.score;
+      quantize(fs, b, dt);
+    }
+    kept.push(fs);
+  }
+
+  for (let j=0; j<targets.length && kept.length<MAX_FACES; j++){
+    if (usedTarget[j]) continue;
+    kept.push(newFaceState(targets[j], nextFaceId++));
+  }
+
+  faces = kept;
+}
+
+/* Cosmetic parallax: each feature sits at a notional depth relative to the
+   base plate (0) and shifts against the yaw/pitch proxy by an amount
+   proportional to it — closer features (brows, a raised ridge) move more,
+   recessed ones (eyes, sunk in their sockets) move the other way. "A bit",
+   per the brief: PARALLAX caps the whole effect at a few % of a face-width
+   even at the proxy's extremes. */
+const PARALLAX = 0.05;
+const DEPTH = { brow:0.9, eyes:-0.5, mouth:0.5 };
+
+/* ── Embers ───────────────────────────────────────────────────────────
+   A tiny particle system per face, in the SAME local unit-space the mask
+   itself is drawn in (1 unit = 1 face-width) — so embers ride along with
+   the mask's own position, rotation and scale for free, rather than
+   tracking the room. Drawn on top of the opaque base plate but under the
+   carved features (see paintOne): the plate is nearly as large as the
+   whole local unit-space, so an ember drawn *behind* it would need an
+   unbelievable lifetime/speed to ever clear its silhouette and would just
+   render invisible the whole time. On top of the plate, additively
+   blended, it reads as a glow on the mask's own surface instead. */
+const EMBER_MAX = 24;                    /* per face — keeps 4-face worst case cheap */
+const EMBER_RATE = 18;                   /* particles/sec at full jaw-open */
+const EMBER_LIFE = [0.6, 1.2];           /* seconds, randomised per particle */
+const EMBER_COLORS = ['#FFD24C','#FF9C3A','#FF6A2E','#FF3B1E'];
+const EMBER_CORE = '#FFF6D6';            /* hot centre every ember fades from, regardless of its outer colour */
+
+function spawnEmber(fs){
+  fs.embers.push({
+    x: (Math.random()-0.5)*0.10,
+    y: LAYOUT.mouthY - 0.02,
+    vx: (Math.random()-0.5)*0.18,
+    vy: -(0.35 + Math.random()*0.35),
+    life: 0,
+    maxLife: EMBER_LIFE[0] + Math.random()*(EMBER_LIFE[1]-EMBER_LIFE[0]),
+    size: 0.022 + Math.random()*0.03,
+    color: EMBER_COLORS[(Math.random()*EMBER_COLORS.length)|0],
+    flicker: Math.random()*Math.PI*2,
+  });
+}
+
+/* Spawn rate and initial speed scale with jawOpen, so the mask only
+   breathes fire while the mouth is actually open, and more so the wider —
+   a closed mouth (jaw below the same 0.15 the shape quantiser uses for
+   "not open") emits nothing at all. */
+function updateEmbers(fs, dt){
+  const jaw = fs.scores.jaw || 0;
+  if (jaw > 0.15 && fs.embers.length < EMBER_MAX){
+    fs.emberT += dt*EMBER_RATE*jaw;
+    while (fs.emberT >= 1 && fs.embers.length < EMBER_MAX){ spawnEmber(fs); fs.emberT -= 1; }
+  }
+  for (let i=fs.embers.length-1; i>=0; i--){
+    const p = fs.embers[i];
+    p.life += dt;
+    if (p.life >= p.maxLife){ fs.embers.splice(i,1); continue; }
+    p.x += p.vx*dt; p.y += p.vy*dt;
+    p.vx += (Math.random()-0.5)*0.6*dt;   /* turbulence */
+    p.vy -= 0.15*dt;                       /* embers speed up as they rise, like real heat */
   }
 }
 
-function paint(ctx){
-  if (!face) return;
+function drawEmbers(ctx, fs){
+  if (!fs.embers.length) return;
   ctx.save();
-  ctx.translate(face.x, face.y);
-  ctx.rotate(face.roll);
-  ctx.scale(face.w, face.w);          /* 1 unit = one face width */
+  ctx.globalCompositeOperation = 'lighter';   /* additive — overlapping embers blow out to white-hot */
+  for (const p of fs.embers){
+    const t = p.life/p.maxLife;
+    const fade = t < 0.15 ? t/0.15 : 1-(t-0.15)/0.85;   /* quick fade-in, slower fade-out */
+    const flicker = 0.75 + 0.25*Math.sin(p.flicker + p.life*18);
+    const r = p.size*(1-t*0.4)*flicker;
+    /* Hot core → ember colour → transparent, not a flat colour fading out:
+       a single-colour disc over a saturated blue mask reads as pink where
+       they mix (additive orange onto blue drifts toward magenta) — a bright
+       near-white centre is what actually reads as "glowing" rather than
+       "tinted", the same reason a real coal looks white-hot in the middle. */
+    const g = ctx.createRadialGradient(p.x,p.y,0, p.x,p.y,r*2.8);
+    g.addColorStop(0, EMBER_CORE);
+    g.addColorStop(0.35, p.color);
+    g.addColorStop(1, 'transparent');
+    ctx.globalAlpha = Math.max(0,fade)*flicker;
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(p.x,p.y,r*2.8,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function paint(ctx){
+  for (const fs of faces) paintOne(ctx, fs);
+}
+
+function paintOne(ctx, fs){
+  ctx.save();
+  ctx.translate(fs.x, fs.y);
+  ctx.rotate(fs.roll);
+  ctx.scale(fs.w * S.maskScale, fs.w * S.maskScale);   /* 1 unit = one face width, times the size setting */
   ctx.lineJoin = 'round';
 
-  drawAsset(ctx, 'base');
-  drawMirrored(ctx, shapes.brows, LAYOUT.browX, LAYOUT.browY);
-  drawMirrored(ctx, shapes.eyes,  LAYOUT.eyeX,  LAYOUT.eyeY);
-  ctx.save(); ctx.translate(0, LAYOUT.mouthY); drawAsset(ctx, shapes.mouth); ctx.restore();
+  const px = (fs.yaw   || 0) * PARALLAX;
+  const py = (fs.pitch || 0) * PARALLAX;
+  const { shapes } = fs;
+
+  /* "Behind the face": behind the sculpted features (brow/eyes/mouth, drawn
+     after), not behind the opaque plate itself — that plate is nearly as
+     large as the whole local unit-space, so an ember with any believable
+     lifetime would never travel far enough to clear its silhouette and
+     would just render invisible. Drawn on TOP of the plate instead, with an
+     additive blend, it reads as a warm glow on the mask's own surface, with
+     the crisp carved features layered over it and unaffected. */
+  drawBase(ctx);
+  drawEmbers(ctx, fs);
+
+  ctx.save(); ctx.translate(px*DEPTH.brow, py*DEPTH.brow);
+  if (!(ART[shapes.brows] && drawArt(ctx, ART[shapes.brows])))
+    drawMirrored(ctx, shapes.brows, LAYOUT.browX, LAYOUT.browY);
+  ctx.restore();
+
+  ctx.save(); ctx.translate(px*DEPTH.eyes, py*DEPTH.eyes);
+  if (!(ART[shapes.eyes] && drawArt(ctx, ART[shapes.eyes])))
+    drawMirrored(ctx, shapes.eyes, LAYOUT.eyeX, LAYOUT.eyeY);
+  ctx.restore();
+
+  ctx.save(); ctx.translate(px*DEPTH.mouth, py*DEPTH.mouth);
+  if (!(ART[shapes.mouth] && drawArt(ctx, ART[shapes.mouth]))){
+    ctx.save(); ctx.translate(0, LAYOUT.mouthY); DRAW[shapes.mouth](ctx); ctx.restore();
+  }
+  ctx.restore();
 
   ctx.restore();
 }
@@ -890,19 +1189,25 @@ function resize(){
 const NAME = k => k.split('_')[1].toUpperCase();
 const n2 = v => v.toFixed(2).replace(/^0/,'');
 
+/* Detail rows can only show one face's numbers at a time; the closest
+   (widest) tracked face gets them, on the theory that whoever is nearest
+   the camera is whoever the readout is for. */
 function syncHud(){
-  $('hudState').textContent = face ? 'Tracking' : 'Looking for a face';
-  if (!face){
+  const n = faces.length;
+  $('hudState').textContent = !n ? 'Looking for a face'
+    : n===1 ? 'Tracking' : `Tracking ${n} faces`;
+  if (!n){
     $('vEyes').textContent = $('vBrows').textContent = $('vMouth').textContent = '—';
     $('sEyes').textContent = $('sBrows').textContent = $('sMouth').textContent = '—';
     return;
   }
-  $('vEyes').textContent  = NAME(shapes.eyes);
-  $('vBrows').textContent = NAME(shapes.brows);
-  $('vMouth').textContent = NAME(shapes.mouth);
-  $('sEyes').textContent  = `blink ${n2(scores.blink)} · wide ${n2(scores.wide)}`;
-  $('sBrows').textContent = `down ${n2(scores.browDown)} · up ${n2(scores.browUp)}`;
-  $('sMouth').textContent = `jaw ${n2(scores.jaw)} · smile ${n2(scores.smile)}`;
+  const fs = faces.reduce((a,b) => b.w > a.w ? b : a);
+  $('vEyes').textContent  = NAME(fs.shapes.eyes);
+  $('vBrows').textContent = NAME(fs.shapes.brows);
+  $('vMouth').textContent = NAME(fs.shapes.mouth);
+  $('sEyes').textContent  = `blink ${n2(fs.scores.blink)} · wide ${n2(fs.scores.wide)}`;
+  $('sBrows').textContent = `down ${n2(fs.scores.browDown)} · up ${n2(fs.scores.browUp)}`;
+  $('sMouth').textContent = `jaw ${n2(fs.scores.jaw)} · smile ${n2(fs.scores.smile)}`;
 }
 
 function applyHud(){
@@ -913,37 +1218,53 @@ function applyHud(){
   press($('segHud'), 'hud', S.hud ? 'on' : 'off');
 }
 
+function applyScale(){
+  const pct = Math.round(S.maskScale*100);
+  $('sScale').value = pct;
+  $('oScale').textContent = pct + '%';
+}
+
+function applyMotion(){
+  press($('segMotion'), 'motion', S.motion);
+}
+
 /* ── Loop ─────────────────────────────────────────────────────────── */
-let hudT = 0;
-function tick(){
+let hudT = 0, lastTick = 0;
+function tick(now){
   requestAnimationFrame(tick);
   resize();
   mx.clearRect(0,0,W,H);              /* transparent, never black */
+
+  /* Clamped tighter than a typical frame-delta cap (SPLIIIT uses .1s): the
+     spring motion style integrates explicitly, and a dt much past this
+     starts to ring harder than the underdamping alone accounts for. */
+  const dt = lastTick ? Math.min((now-lastTick)/1000, 0.05) : 1/60;
+  lastTick = now;
 
   if (landmarker && src.ready && vid.readyState >= 2 && vid.currentTime !== lastVideoTime){
     lastVideoTime = vid.currentTime;
     let res = null;
     try{ res = landmarker.detectForVideo(vid, performance.now()); } catch(e){ res = null; }
-    const lm = res && res.faceLandmarks && res.faceLandmarks[0];
-    if (lm && lm.length > 454){
-      const cats = res.faceBlendshapes && res.faceBlendshapes[0] && res.faceBlendshapes[0].categories;
-      if (cats){
-        const b = Object.create(null);
-        for (const c of cats) b[c.categoryName] = c.score;
-        quantize(b);
-      }
-      pose(lm);
-    } else {
-      face = null;
-    }
-    document.body.classList.toggle('tracking', !!face);
+    const lmArr = (res && res.faceLandmarks) || [];
+    const bsArr = (res && res.faceBlendshapes) || [];
+    /* faceBlendshapes is index-parallel to faceLandmarks; zip before
+       filtering so a rejected landmark set can't shift the pairing. */
+    const detections = lmArr
+      .map((lm,i) => ({ lm, bs:bsArr[i] }))
+      .filter(d => d.lm && d.lm.length > 454);
+    if (detections.length) updateFaces(detections.map(d => d.lm), detections.map(d => d.bs), dt);
+    else faces = [];
+    document.body.classList.toggle('tracking', faces.length > 0);
   }
+
+  /* Every RAF tick, not gated behind a new detection — particle motion
+     should stay smooth even if MediaPipe's own frame rate is lower. */
+  for (const fs of faces) updateEmbers(fs, dt);
 
   paint(mx);
 
   /* The readout is text in the DOM; repainting it at 60fps is wasted work
-     and makes the numbers unreadable anyway. */
-  const now = performance.now();
+     and makes the numbers unreadable anyway. `now` is RAF's own timestamp. */
   if (S.hud && now - hudT > 100){ hudT = now; syncHud(); }
 }
 
@@ -975,7 +1296,7 @@ const stamp = at => {
 async function capture(){
   if (busy) return;
   if (!src.ready) return snack('Camera isn’t running yet.', 2000);
-  if (!face) return snack('No face tracked — look at the camera and try again.', 2600);
+  if (!faces.length) return snack('No face tracked — look at the camera and try again.', 2600);
 
   busy = true;
   const sh = $('shutter');
@@ -983,7 +1304,8 @@ async function capture(){
   try{
     const png = composite();
     const at = Date.now();
-    shots.unshift({ id:String(at), at, png, eyes:shapes.eyes, brows:shapes.brows, mouth:shapes.mouth });
+    const captured = faces.map(f => ({ eyes:f.shapes.eyes, brows:f.shapes.brows, mouth:f.shapes.mouth }));
+    shots.unshift({ id:String(at), at, png, faces:captured });
     persist();
     refreshRoll();
     snack('Mask saved to gallery.', 1600);
@@ -1032,7 +1354,7 @@ function refreshRoll(){
 function download(s){
   const a = document.createElement('a');
   a.href = s.png;
-  a.download = `ditongo-mask-${s.id}.png`;
+  a.download = `monos-mask-${s.id}.png`;
   a.click();
   snack('PNG downloaded.', 1600);
 }
@@ -1089,6 +1411,22 @@ $('segHud').addEventListener('click', e => {
   S.hud = b.dataset.hud === 'on'; saveHud(S.hud); applyHud(); syncHud();
 });
 
+$('sScale').addEventListener('input', e => {
+  S.maskScale = clamp(+e.target.value, 50, 150)/100;
+  saveScale(S.maskScale);
+  $('oScale').textContent = e.target.value + '%';
+});
+
+$('segMotion').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  S.motion = b.dataset.motion;
+  saveMotion(S.motion);
+  applyMotion();
+  /* Zero the carried state on every tracked face so switching mid-motion
+     can't leave a stale spring velocity or a stepped hold half-elapsed. */
+  for (const fs of faces){ fs.vx = fs.vy = fs.vw = fs.vroll = 0; fs.stepT = 0; }
+});
+
 /* ── Camera ───────────────────────────────────────────────────────── */
 async function startCamera(facing = S.facing){
   if (src.stream) src.stream.getTracks().forEach(t => t.stop());
@@ -1139,7 +1477,7 @@ async function startTracking(){
       },
       runningMode:'VIDEO',
       outputFaceBlendshapes:true,
-      numFaces:1,
+      numFaces:MAX_FACES,
     });
   } catch(e){
     snack('Face tracking failed to load. Check the connection and reload.', 5000);
@@ -1172,8 +1510,12 @@ addEventListener('resize', resize);
 document.addEventListener('visibilitychange', () => { lastVideoTime = -1; });
 
 S.hud = loadHud();
+S.maskScale = loadScale();
+S.motion = loadMotion();
 resize();
 applyHud();
+applyScale();
+applyMotion();
 syncHud();
 refreshRoll();
 requestAnimationFrame(tick);
@@ -1183,21 +1525,37 @@ if (seenSplash()) startCamera();
 else showSplash();
 
 window.__masks = {
-  S, src, shots, ASSETS, TRIBE, T, LAYOUT,
-  get face(){ return face; }, get shapes(){ return shapes; }, get scores(){ return scores; },
+  S, src, shots, ART, HEAD_ART, HEAD_ANCHOR, HEAD_UNIT, TRIBE, T, LAYOUT,
+  MOTION_STYLES, PARALLAX, DEPTH, MAX_FACES, EMBER_MAX, EMBER_RATE,
+  updateEmbers, spawnEmber,
+  get faces(){ return faces; },
+  /* First tracked face, for scripts written before multi-face existed. */
+  get face(){ return faces[0] || null; },
+  get shapes(){ return faces[0] ? faces[0].shapes : null; },
+  get scores(){ return faces[0] ? faces[0].scores : null; },
   get W(){ return W; }, get H(){ return H; },
-  composite, refreshRoll, openSheet, closeSheets, snack, quantize,
-  /* Drive the compositor without a camera: the detector only overwrites
-     `face` when a frame actually arrives, so an injected pose survives. */
-  fake(p, s){
-    face = Object.assign({ x:W/2, y:H/2, w:W*0.34, roll:0 }, p || {});
-    if (s) Object.assign(shapes, s);
+  composite, refreshRoll, openSheet, closeSheets, snack, quantize, rawTarget, newFaceState, updateFaces,
+  /* Drive the compositor without a camera. Replaces the whole tracked-faces
+     array with one synthetic entry by default; pass `{append:true}` to add
+     a second/third face alongside the existing ones instead. */
+  fake(p, s, opts){
+    const t = Object.assign({ x:W/2, y:H/2, w:W*0.34, roll:0, yaw:0, pitch:0 }, p || {});
+    const fs = newFaceState(t, nextFaceId++);
+    if (s) Object.assign(fs.shapes, s);
+    if (opts && opts.append) faces.push(fs); else faces = [fs];
     syncHud();
-    return face;
+    return fs;
   },
   /* Repaint on the spot. The loop is driven by requestAnimationFrame, which
      a hidden tab pauses, so tests can't rely on it firing. */
   render(){ mx.clearRect(0,0,W,H); paint(mx); },
+  /* Step one tracked face's active motion style toward a target without a
+     camera or real landmarks, for exercising lag/spring/stepped/none in
+     isolation. `idx` picks which face when more than one is faked. */
+  stepMotion(target, dt=1/60, n=1, idx=0){
+    for (let i=0;i<n;i++) (MOTION_STYLES[S.motion] || MOTION_STYLES.lag)(faces[idx], target, dt);
+    return faces[idx];
+  },
 };
 </script>
 </body>
