@@ -1,0 +1,1204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Ditongo Masks">
+<meta name="description" content="An AR experiment with illustration — a tribal mask that reads your face and redraws itself.">
+<link rel="icon" href="./Assets/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="./Assets/apple-touch-icon.png">
+<title>Ditongo Masks</title>
+<style>
+/* ─────────────────────────────────────────────────────────────
+   Tokens. Inherited from SPLIIIT so the two apps read as one
+   family: black ground, one mint accent, one blue "selected"
+   fill, pill geometry throughout, dark only on purpose.
+   ───────────────────────────────────────────────────────────── */
+:root{
+  --black:#000000;
+  --mint:#CEFDD3;
+  --mint-dim:#5B715E;
+  --chip:#4C4C4C;
+  --sel:#5065D0;                  /* selected fill */
+  --on-sel:var(--mint);
+  --label:rgba(199,233,199,.8);   /* unselected label — duller than --mint */
+  --danger:#BB0404;
+
+  --surface:var(--black);
+  --s-container:var(--mint);      /* sheets and cards are mint */
+  --on-surface:var(--black);
+  --on-surface-var:var(--mint-dim);
+  --outline:var(--black);
+  --outline-var:rgba(0,0,0,.22);
+  --primary:var(--black);
+  --on-primary:var(--mint);
+  --p-container:var(--black);
+  --on-p-container:var(--mint);
+  --scrim:rgba(0,0,0,.6);
+
+  --sans:'Helvetica Neue',Helvetica,Arial,sans-serif;
+
+  --safe-t:env(safe-area-inset-top);
+  --safe-b:env(safe-area-inset-bottom);
+  /* The bottom control zone. SPLIIIT anchors off a mint bar; this app has
+     no bar, so the deck is the anchor and every bottom-fixed element
+     positions with arithmetic against it rather than its own guessed value. */
+  --deck:34px;
+
+  --ease:cubic-bezier(.2,0,0,1);      /* default */
+  --spring:cubic-bezier(.34,1.56,.64,1); /* release / arrival only */
+}
+
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none}
+body{
+  background:var(--surface);color:var(--on-surface);
+  font-family:var(--sans);font-size:17px;
+  -webkit-user-select:none;user-select:none;
+  height:100dvh;position:relative;
+}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+/* SPLIIIT outlines focus in --primary, which is black on a black ground. */
+:focus-visible{outline:3px solid var(--mint);outline-offset:2px}
+[hidden]{display:none !important}
+.sr-only{
+  position:absolute;width:1px;height:1px;margin:-1px;padding:0;
+  overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;
+}
+
+/* ── Viewport: live camera under a transparent overlay ─────────── */
+#viewport{position:fixed;inset:0;touch-action:none;background:#000}
+#vid,#mask{position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:cover}
+#vid{z-index:0}
+/* The overlay is cleared to transparent, never filled — the camera has to
+   show through it. It is never a pointer target. */
+#mask{z-index:1;pointer-events:none;transition:opacity .16s var(--ease)}
+body.sheet-open #mask,body.sheet-open #hud{opacity:0}
+body.mirror #vid{transform:scaleX(-1)}
+
+/* ── Top bar ───────────────────────────────────────────────────── */
+#topbar{
+  position:fixed;left:0;right:0;top:0;z-index:3;
+  padding:calc(var(--safe-t) + 25px) 20px 0;
+  display:flex;align-items:center;gap:12px;pointer-events:none;
+}
+#topbar > *{pointer-events:auto}
+.wordmark{
+  font-size:16px;line-height:16px;letter-spacing:.06em;color:var(--mint);
+  text-shadow:0 1px 3px rgba(0,0,0,.85);
+}
+.wordmark b{font-weight:800}
+.top-actions{margin-left:auto;display:flex;align-items:center;gap:12px}
+
+.icon-btn{
+  width:40px;height:40px;flex:0 0 40px;display:grid;place-items:center;
+  border-radius:50%;color:var(--mint);
+  filter:drop-shadow(0 1px 3px rgba(0,0,0,.85));
+}
+.icon-btn svg{width:24px;height:24px;fill:currentColor;display:block}
+
+/* ── The readout panel ─────────────────────────────────────────── */
+#hud{
+  position:fixed;left:15px;z-index:3;
+  bottom:calc(var(--safe-b) + var(--deck) + 63px + 16px);
+  width:min(276px,calc(100vw - 30px));
+  background:var(--black);border:1px solid var(--mint);border-radius:18px;
+  padding:12px 14px;color:var(--mint);
+  box-shadow:0 2px 10px rgba(0,0,0,.35);
+  opacity:1;transition:opacity .16s var(--ease);
+}
+#hud[hidden]{display:none !important}
+.hud-state{
+  font-size:12px;line-height:14px;font-weight:700;letter-spacing:.02em;
+  text-transform:uppercase;color:var(--label);
+  display:flex;align-items:center;gap:6px;margin:0 0 10px;
+}
+.hud-state::before{
+  content:'';width:7px;height:7px;border-radius:50%;background:var(--mint-dim);
+  transition:background .16s var(--ease);
+}
+body.tracking .hud-state::before{background:var(--mint)}
+.hud-row{display:flex;align-items:baseline;gap:8px;margin:7px 0}
+.hud-row .k{font-size:12px;line-height:15px;color:var(--label);width:42px;flex:0 0 42px}
+.hud-row .v{font-size:14px;line-height:15px;font-weight:700;white-space:nowrap}
+/* nowrap + tabular-nums: the scores change every frame, and a row that
+   reflows or re-wraps as digits change width is unreadable. */
+.hud-row .s{
+  margin-left:auto;flex:0 0 auto;
+  font-size:11px;line-height:15px;color:var(--label);
+  font-variant-numeric:tabular-nums;white-space:nowrap;
+}
+
+/* ── Floating chrome over the image ────────────────────────────── */
+.pill{
+  position:fixed;z-index:3;
+  height:35px;border-radius:50px;background:var(--black);color:var(--mint);
+  display:flex;align-items:center;justify-content:center;gap:4px;
+  padding:0 14px;font-size:14px;line-height:15px;white-space:nowrap;
+  border:1px solid var(--mint);
+  box-shadow:0 2px 10px rgba(0,0,0,.35);
+  transition:transform .12s var(--ease),background .15s var(--ease),color .15s var(--ease);
+}
+.pill:active{transform:scale(.97)}
+#btnHud{right:15px;bottom:calc(var(--safe-b) + var(--deck) + (63px - 35px)/2)}
+#btnHud[aria-pressed="false"]{
+  background:var(--sel);color:var(--on-sel);border-color:transparent;
+  box-shadow:0 0 0 1px rgba(80,101,208,.55),0 2px 14px rgba(0,0,0,.55);
+}
+
+/* The shutter. No icon inside — the core is a ::after, so nothing
+   stacks a second circle on top of it. */
+#shutter{
+  position:fixed;left:50%;transform:translateX(-50%);
+  bottom:calc(var(--safe-b) + var(--deck));z-index:3;
+  width:63px;height:63px;border-radius:50%;
+  background:var(--mint);display:grid;place-items:center;
+  box-shadow:0 2px 10px rgba(0,0,0,.35);
+  transition:transform .12s var(--ease);
+}
+#shutter::after{
+  content:'';width:33px;height:33px;border-radius:50%;background:var(--black);
+  transition:width .15s var(--ease),height .15s var(--ease),border-radius .15s var(--ease);
+}
+#shutter:active{transform:translateX(-50%) scale(.93)}
+#shutter.busy::after{width:24px;height:24px;border-radius:4px}
+#shutter:disabled{opacity:.4;pointer-events:none}
+
+/* Gallery button: the newest mask is its own face. */
+#btnRoll{
+  position:fixed;left:15px;z-index:3;
+  bottom:calc(var(--safe-b) + var(--deck) + (63px - 48px)/2);
+  width:48px;height:48px;
+  border-radius:11px;border:2px solid var(--mint);background:var(--black);
+  display:grid;place-items:center;
+  box-shadow:0 2px 10px rgba(0,0,0,.35);
+  transition:transform .12s var(--ease);
+}
+#btnRoll:active{transform:scale(.955)}
+/* inset+absolute, not a grid child: place-items:center sizes children to
+   content, which lets a tall capture render past the frame unmasked. */
+#btnRoll img{
+  position:absolute;inset:0;width:100%;height:100%;
+  object-fit:cover;display:block;border-radius:9px;
+}
+#rollBadge{
+  position:absolute;top:-7px;right:-7px;min-width:19px;height:19px;padding:0 5px;
+  border-radius:10px;background:var(--mint);color:var(--black);
+  font-size:12px;line-height:19px;text-align:center;font-weight:700;
+}
+
+/* ── Scrim + sheets ───────────────────────────────────────────── */
+#scrim{
+  position:fixed;inset:0;z-index:4;background:var(--scrim);
+  opacity:0;pointer-events:none;transition:opacity .2s var(--ease);
+}
+#scrim.on{opacity:1;pointer-events:auto}
+
+.sheet{
+  position:fixed;left:0;right:0;bottom:0;z-index:5;
+  background:var(--s-container);color:var(--on-surface);
+  border-radius:28px 28px 0 0;
+  padding:0 16px calc(var(--safe-b) + 16px);
+  transform:translateY(101%);transition:transform .28s var(--ease);
+  max-height:82dvh;overflow-y:auto;overscroll-behavior:contain;
+  box-shadow:0 -2px 24px rgba(0,0,0,.5);
+}
+.sheet.on{transform:translateY(0)}
+.grabber{width:32px;height:4px;border-radius:2px;background:var(--outline-var);margin:12px auto 4px}
+.sheet h2{font-size:28px;font-weight:800;margin:12px 0 6px}
+.sheet .hint{font-size:14px;margin:0;color:var(--on-surface-var)}
+.sheet .hint b{color:var(--black)}
+
+.group{margin:14px 0}
+.group > .label{
+  font-size:19px;font-weight:800;letter-spacing:0;text-transform:none;
+  color:var(--black);margin-bottom:8px;display:flex;gap:8px;align-items:baseline;
+}
+.group > .label output{
+  margin-left:auto;font-variant-numeric:tabular-nums;color:var(--primary);
+  font-size:14px;font-weight:400;
+}
+.group.callout{background:#fff;border-radius:18px;padding:22px 20px;margin:18px 0}
+.group.callout > .label{
+  font-size:17px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;
+}
+.group.callout .hint{font-size:16px;line-height:1.5;color:var(--black)}
+.callout-links{display:flex;flex-wrap:wrap;gap:8px 18px;margin:14px 0 0}
+.callout-links a{
+  font-size:15px;font-weight:600;color:var(--black);
+  text-decoration:underline;text-underline-offset:3px;
+  display:flex;align-items:center;gap:6px;
+}
+.callout-links svg{width:15px;height:15px;fill:currentColor;display:block;flex:0 0 auto}
+
+.seg{display:flex;border:1px solid var(--outline);border-radius:999px;overflow:hidden}
+.seg button{
+  flex:1;min-height:48px;padding:0 8px;font-size:15px;font-weight:500;
+  color:var(--on-surface);border-right:1px solid var(--outline);
+  display:flex;align-items:center;justify-content:center;gap:5px;
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--p-container);color:var(--on-p-container)}
+
+.actions{display:flex;gap:10px;margin:16px 0 4px}
+.btn{
+  flex:1;min-height:48px;border-radius:999px;font-size:16px;font-weight:500;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  border:1px solid var(--outline);color:var(--on-surface);
+}
+.btn.filled{background:var(--primary);color:var(--on-primary);border-color:transparent}
+.btn.danger{background:var(--danger);color:#fff;border-color:transparent}
+.btn:disabled{opacity:.4;pointer-events:none}
+.btn svg{width:20px;height:20px;fill:currentColor}
+
+/* ── Gallery drawer ───────────────────────────────────────────── */
+.sheet-head{display:flex;align-items:center;gap:10px;margin:4px 0 12px}
+.sheet-head h2{margin:0;flex:1}
+.sheet-head .count{
+  font-size:14px;color:var(--on-surface-var);font-variant-numeric:tabular-nums;
+}
+.head-x{
+  width:40px;height:40px;border-radius:50%;flex:0 0 auto;
+  display:grid;place-items:center;background:rgba(0,0,0,.08);color:var(--black);
+}
+.head-x svg{width:24px;height:24px;fill:currentColor;display:block}
+
+#shots{
+  display:grid;grid-template-columns:repeat(2,1fr);gap:10px;
+  margin:0 0 4px;padding:0;list-style:none;
+}
+#shots:empty::after{
+  content:'No masks yet. Pull a face and hit the shutter.';
+  grid-column:1/-1;text-align:center;font-size:15px;line-height:1.4;
+  color:var(--on-surface-var);padding:26px 12px 30px;
+}
+.shot{display:flex;flex-direction:column;gap:6px}
+/* Fixed frame height so every mask sits at the same size in the grid,
+   whatever aspect the device captured at — but `contain`, not `cover`:
+   cover crops a landscape capture through the middle of the face, which
+   is the one thing the card exists to show. Letterboxing is the cheaper
+   loss. */
+.shot .face{
+  position:relative;width:100%;height:160px;
+  border-radius:12px;overflow:hidden;background:#151515;display:block;
+}
+.shot .face img{width:100%;height:100%;object-fit:contain;display:block}
+.shot .when{
+  position:absolute;left:8px;bottom:8px;z-index:2;
+  font-size:11px;line-height:14px;font-weight:700;color:#fff;
+  font-variant-numeric:tabular-nums;
+  text-shadow:0 1px 3px rgba(0,0,0,.85);
+}
+.shot-acts{display:flex;gap:6px}
+/* Save takes the room; delete is a compact icon. A destructive action
+   should not be the largest target on the card. */
+.cpill{
+  flex:1 1 auto;min-height:44px;border-radius:40px;
+  background:var(--black);color:var(--mint);
+  font-size:14px;line-height:15px;
+  display:flex;align-items:center;justify-content:center;gap:5px;
+  transition:transform .12s var(--ease);
+}
+.cpill:active{transform:scale(.97)}
+.cpill.danger{background:var(--danger);color:#fff;flex:0 0 60px}
+.cpill svg{width:16px;height:16px;fill:currentColor;display:block}
+
+/* ── Snackbar ─────────────────────────────────────────────────── */
+/* Top-anchored and slides down: the bottom of the screen is crowded with
+   the shutter, gallery button and pill. translateX(-50%) is the centring,
+   not the animation, so it has to be carried on both states. */
+#snack{
+  position:fixed;left:50%;width:80%;max-width:420px;
+  top:calc(var(--safe-t) + 76px);z-index:6;
+  background:var(--sel);color:var(--on-sel);
+  border-radius:8px;padding:14px 16px;font-size:16px;line-height:1.35;
+  box-shadow:0 3px 14px rgba(0,0,0,.5);
+  opacity:0;transform:translateX(-50%) translateY(-8px);pointer-events:none;
+  transition:opacity .2s var(--ease),transform .2s var(--ease);
+}
+#snack.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ── First-run gate ──────────────────────────────────────────── */
+/* Its own overlay, not #scrim — that one is wired to sheet dismissal, and
+   this is a gate whose only way past is the button. */
+#splash{
+  position:fixed;inset:0;z-index:8;display:grid;place-items:center;padding:16px;
+  background:var(--scrim);opacity:0;transition:opacity .24s var(--ease);
+}
+#splash.on{opacity:1}
+#splash.on .splash-card{transform:scale(1)}
+.splash-card{
+  width:320px;max-width:calc(100vw - 32px);
+  background:var(--mint);border-radius:30px;padding:32px 27px 20px;
+  display:flex;flex-direction:column;align-items:center;gap:9px;
+  transform:scale(.96);transition:transform .24s var(--ease);
+}
+.splash-mark{font-size:19px;font-weight:800;letter-spacing:.06em;color:var(--black)}
+.splash-tagline{font-size:15px;line-height:1.35;font-weight:700;text-align:center;margin:2px 0 0}
+.splash-desc{font-size:13px;line-height:1.4;text-align:center;color:var(--chip);margin:0}
+.splash-go{
+  margin:12px 0 0;width:100%;min-height:48px;border-radius:48px;
+  background:var(--black);color:var(--mint);
+  font-size:14px;line-height:17px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;
+  transition:transform .12s var(--ease);
+}
+.splash-go:active{transform:scale(.97)}
+
+@media (prefers-reduced-motion:reduce){
+  *{transition-duration:.01ms !important;animation-duration:.01ms !important}
+}
+</style>
+</head>
+<body>
+
+<div id="viewport">
+  <video id="vid" playsinline muted autoplay></video>
+  <canvas id="mask"></canvas>
+</div>
+
+<div id="topbar">
+  <span class="wordmark" role="img" aria-label="Ditongo Masks">DITONGO<b>MASKS</b></span>
+  <div class="top-actions">
+    <button class="icon-btn" id="btnFlip" aria-label="Switch camera"></button>
+    <button class="icon-btn" id="btnTune" aria-label="Settings"></button>
+  </div>
+</div>
+
+<div id="hud" role="status" aria-live="off">
+  <p class="hud-state" id="hudState">Looking for a face</p>
+  <div class="hud-row"><span class="k">Eyes</span><span class="v" id="vEyes">—</span><span class="s" id="sEyes">—</span></div>
+  <div class="hud-row"><span class="k">Brows</span><span class="v" id="vBrows">—</span><span class="s" id="sBrows">—</span></div>
+  <div class="hud-row"><span class="k">Mouth</span><span class="v" id="vMouth">—</span><span class="s" id="sMouth">—</span></div>
+</div>
+
+<button class="pill" id="btnHud" aria-pressed="true" aria-label="Hide readout">Readout</button>
+
+<button id="btnRoll" aria-label="Open gallery" hidden>
+  <img alt=""><span id="rollBadge">0</span>
+</button>
+
+<button id="shutter" aria-label="Snap and save mask"></button>
+
+<div id="scrim"></div>
+
+<!-- Settings -->
+<div class="sheet" id="sheetTune" role="dialog" aria-modal="true" aria-label="Settings">
+  <div class="grabber"></div>
+  <h2>Hello!</h2>
+  <p class="hint"><b>Ditongo Masks</b> paints a symmetrical tribal mask over your face and
+  swaps its eyes, brows and mouth for different carved shapes depending on what your face
+  is actually doing. Blink, scowl, shout.</p>
+
+  <div class="group">
+    <div class="label"><span>Readout</span></div>
+    <div class="seg" id="segHud" role="group" aria-label="Readout">
+      <button data-hud="on" aria-pressed="true">Show</button>
+      <button data-hud="off">Hide</button>
+    </div>
+    <p class="hint" style="margin:8px 0 0">The live blendshape scores and which carved shape each one has selected.</p>
+  </div>
+
+  <div class="group">
+    <div class="label"><span>Gallery</span><output id="oShots">empty</output></div>
+    <div class="actions" style="margin:0">
+      <button class="btn" id="tuneRoll">Open gallery</button>
+      <button class="btn danger" id="tuneClear">Clear all</button>
+    </div>
+    <p class="hint" style="margin:8px 0 0">Masks are kept in this browser only, and the oldest drop out when the
+    store fills. Download anything you want to keep.</p>
+  </div>
+
+  <div class="group callout">
+    <div class="label"><span>An AR experiment</span></div>
+    <p class="hint">Face landmarks come from MediaPipe, the mask is drawn procedurally on a
+    canvas — no image files, no build step. Design and direction by Bruno Silva.</p>
+    <p class="callout-links"><a id="lnkSite" href="https://ditongo.com" target="_blank" rel="noopener">ditongo.com</a></p>
+  </div>
+
+  <div class="actions"><button class="btn filled" id="tuneDone">Close</button></div>
+</div>
+
+<!-- Gallery -->
+<div class="sheet" id="sheetRoll" role="dialog" aria-modal="true" aria-label="Gallery">
+  <div class="grabber"></div>
+  <div class="sheet-head">
+    <h2>Masks</h2>
+    <span class="count" id="rollCount"></span>
+    <button class="head-x" id="rollX" aria-label="Close gallery"></button>
+  </div>
+  <ul id="shots"></ul>
+  <div class="actions"><button class="btn filled" id="rollDone">Close</button></div>
+</div>
+
+<div id="snack" role="status" aria-live="polite"></div>
+
+<div id="splash" hidden role="dialog" aria-modal="true" aria-labelledby="splashMark" aria-describedby="splashDesc">
+  <div class="splash-card">
+    <span class="splash-mark" id="splashMark">DITONGO<b style="font-weight:400">MASKS</b></span>
+    <p class="splash-tagline">An AR experiment with illustration.</p>
+    <p class="splash-desc" id="splashDesc">A carved mask tracks your face and rebuilds itself
+    from what your face is doing. Needs the camera — video is processed on your device and
+    never uploaded. No microphone.</p>
+    <button class="splash-go" id="splashGo">Continue</button>
+  </div>
+</div>
+
+<script type="module">
+/* vision_bundle.mjs, not .js: the unversioned .js path serves the UMD build,
+   which exports nothing to an ES module. Version is pinned because the wasm
+   directory below has to be the same build as the loader. */
+import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs';
+
+'use strict';
+
+const $ = id => document.getElementById(id);
+const clamp = (v,a,b) => v<a?a:v>b?b:v;
+const press = (g,attr,val) =>
+  [...g.children].forEach(b => b.setAttribute('aria-pressed', String(b.dataset[attr] === String(val))));
+
+/* ── Icons ─────────────────────────────────────────────────────────
+   Material Symbols, Sharp, weight 400, grade 0, optical size 24,
+   exported on Google's 0 -960 960 960 grid. Sizing and colour are the
+   parent's job, so the helper emits no width/height/fill. */
+const ICON = {
+  settings:'m370-80-16-128q-13-5-24.5-12T307-235l-119 50L78-375l103-78q-1-7-1-13.5v-27q0-6.5 1-13.5L78-585l110-190 119 50q11-8 23-15t24-12l16-128h220l16 128q13 5 24.5 12t22.5 15l119-50 110 190-103 78q1 7 1 13.5v27q0 6.5-2 13.5l103 78-110 190-118-50q-11 8-23 15t-24 12L590-80H370Zm70-80h79l14-106q31-8 57.5-23.5T639-327l99 41 39-68-86-65q5-14 7-29.5t2-31.5q0-16-2-31.5t-7-29.5l86-65-39-68-99 42q-22-23-48.5-38.5T533-694l-13-106h-79l-14 106q-31 8-57.5 23.5T321-633l-99-41-39 68 86 64q-5 15-7 30t-2 32q0 16 2 31t7 30l-86 65 39 68 99-42q22 23 48.5 38.5T427-266l13 106Zm42-180q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99.5 41T342-480q0 58 40.5 99t99.5 41Zm-2-140Z',
+  cameraswitch:'M240-280v-400h120l40-40h160l40 40h120v400H240Zm80-80h320v-240H320v240Zm160-40q33 0 56.5-23.5T560-480q0-33-23.5-56.5T480-560q-33 0-56.5 23.5T400-480q0 33 23.5 56.5T480-400ZM342-940q34-11 68.5-15.5T480-960q94 0 177.5 33.5t148 93Q870-774 911-693.5T960-520h-80q-7-72-38-134.5t-79.5-110Q714-812 651-842t-135-36l62 62-56 56-180-180ZM618-20Q584-9 549.5-4.5T480 0q-94 0-177.5-33.5t-148-93Q90-186 49-266.5T0-440h80q8 72 38.5 134.5t79 110Q246-148 309-118t135 36l-62-62 56-56L618-20ZM480-480Z',
+  close:'m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z',
+  delete:'M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280ZM680-720H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360Z',
+  download:'M480-320 280-520l56-58 104 104v-326h80v326l104-104 56 58-200 200ZM160-160v-200h80v120h480v-120h80v200H160Z',
+  open_in_new:'M120-120v-720h360v80H200v560h560v-280h80v360H120Zm268-212-56-56 372-372H560v-80h280v280h-80v-144L388-332Z',
+};
+const svg = n => `<svg viewBox="0 -960 960 960" aria-hidden="true"><path d="${ICON[n]}"/></svg>`;
+
+$('btnTune').innerHTML = svg('settings');
+$('btnFlip').innerHTML = svg('cameraswitch');
+$('rollX').innerHTML = svg('close');
+$('lnkSite').insertAdjacentHTML('beforeend', svg('open_in_new'));
+
+/* ── State ────────────────────────────────────────────────────────── */
+const S = { hud:true, facing:'user' };
+const src = { w:0, h:0, mirror:true, stream:null, ready:false };
+
+let W = 0, H = 0;                 /* overlay backing-store size */
+let landmarker = null;
+let lastVideoTime = -1;
+let face = null;                  /* smoothed pose, or null when untracked */
+let shapes = { eyes:'eye_triangle', brows:'brow_flat', mouth:'mouth_diamond' };
+let scores = { blink:0, wide:0, browDown:0, browUp:0, jaw:0, smile:0 };
+let busy = false;
+
+const vid = $('vid'), mask = $('mask'), mx = mask.getContext('2d');
+
+/* ── Snackbar ─────────────────────────────────────────────────────── */
+let snackT = 0;
+function snack(msg, ms = 2600){
+  const s = $('snack'); s.textContent = msg; s.classList.add('on');
+  clearTimeout(snackT); snackT = setTimeout(() => s.classList.remove('on'), ms);
+}
+
+/* ── Storage ──────────────────────────────────────────────────────────
+   localStorage throws outright in some private modes, so both ends are
+   guarded and a failure means no gallery rather than no capture. */
+const SHOTS_KEY = 'ditongomasks-shots';
+const SEEN_KEY  = 'ditongomasks-seen';
+const HUD_KEY   = 'ditongomasks-hud';
+
+const loadShots = () => { try{ return JSON.parse(localStorage.getItem(SHOTS_KEY)) || []; } catch(e){ return []; } };
+const writeShots = a => { try{ localStorage.setItem(SHOTS_KEY, JSON.stringify(a)); return true; } catch(e){ return false; } };
+const seenSplash = () => { try{ return !!localStorage.getItem(SEEN_KEY); } catch(e){ return false; } };
+const markSeen   = () => { try{ localStorage.setItem(SEEN_KEY,'1'); } catch(e){} };
+const loadHud    = () => { try{ return localStorage.getItem(HUD_KEY) !== '0'; } catch(e){ return true; } };
+const saveHud    = v => { try{ localStorage.setItem(HUD_KEY, v ? '1' : '0'); } catch(e){} };
+
+/* A full-frame PNG data URL is 0.5–2MB and localStorage is a ~5MB budget
+   for the whole origin, so the cap has to be on bytes as well as count,
+   and the export is downscaled before it is ever stored. */
+const SHOT_MAX_LONG = 1080, MAX_SHOTS = 24, MAX_BYTES = 4.0e6;
+let shots = loadShots();
+let warnedFull = false;
+
+function prune(){
+  let evicted = 0;
+  shots.sort((a,b) => b.at - a.at);                  /* newest first */
+  const bytes = () => shots.reduce((n,s) => n + s.png.length, 0);
+  while (shots.length > MAX_SHOTS || (shots.length > 1 && bytes() > MAX_BYTES)){
+    shots.pop(); evicted++;
+  }
+  return evicted;
+}
+
+function persist(){
+  let evicted = prune();
+  while (!writeShots(shots) && shots.length > 1){     /* quota still refused it */
+    shots.pop(); evicted++;
+  }
+  if (evicted && !warnedFull){
+    warnedFull = true;
+    setTimeout(() => snack('Gallery is full. Download masks or the oldest start dropping.', 3400), 2600);
+  }
+}
+
+/* ── Blendshape thresholds ────────────────────────────────────────── */
+const T = {
+  eyeBlink:0.4, eyeWide:0.4,
+  jawMid:0.15, jawWide:0.5,
+  browDown:0.35, browUp:0.35,
+};
+
+/* The mask is symmetrical, so a single shape has to answer for both sides:
+   the stronger of left/right drives it, which is also what makes a
+   one-eyed wink read as a blink rather than as nothing. */
+function quantize(b){
+  const blink    = Math.max(b.eyeBlinkLeft || 0, b.eyeBlinkRight || 0);
+  const wide     = Math.max(b.eyeWideLeft  || 0, b.eyeWideRight  || 0);
+  const browDown = Math.max(b.browDownLeft || 0, b.browDownRight || 0);
+  const browUp   = b.browInnerUp || 0;
+  const jaw      = b.jawOpen || 0;
+  const smile    = Math.max(b.mouthSmileLeft || 0, b.mouthSmileRight || 0);
+
+  scores = { blink, wide, browDown, browUp, jaw, smile };
+
+  shapes = {
+    eyes:  blink > T.eyeBlink ? 'eye_circle'
+         : wide  > T.eyeWide  ? 'eye_square'
+         : 'eye_triangle',
+    brows: browDown > T.browDown ? 'brow_angry'
+         : browUp   > T.browUp   ? 'brow_arch'
+         : 'brow_flat',
+    mouth: jaw > T.jawWide ? 'mouth_hexagon'
+         : jaw > T.jawMid  ? 'mouth_oval'
+         : 'mouth_diamond',
+  };
+}
+
+/* ── Tribal palette ───────────────────────────────────────────────────
+   The chrome stays black and mint. The mask is the one loud thing in the
+   app, so it is the only place colour is allowed to be vibrant. */
+const TRIBE = {
+  bone:'#F4EAD5', ochre:'#E8A33D', clay:'#C4552E',
+  blood:'#8C2318', jade:'#1F8A70', indigo:'#2B3A67', ink:'#12100E',
+};
+
+/* ── Asset map ────────────────────────────────────────────────────────
+   Every carved feature is procedural by default so the app runs with no
+   image files at all. Point `src` at a local PNG/SVG to override one —
+   it is drawn into the same unit box the procedural version uses, so
+   nothing else has to change. */
+const ASSETS = {
+  base:          { src:null, w:1.00, h:1.18 },
+  eye_triangle:  { src:null, w:0.20, h:0.17 },
+  eye_circle:    { src:null, w:0.20, h:0.20 },
+  eye_square:    { src:null, w:0.20, h:0.20 },
+  brow_flat:     { src:null, w:0.26, h:0.07 },
+  brow_angry:    { src:null, w:0.26, h:0.12 },
+  brow_arch:     { src:null, w:0.26, h:0.12 },
+  mouth_diamond: { src:null, w:0.34, h:0.16 },
+  mouth_oval:    { src:null, w:0.34, h:0.22 },
+  mouth_hexagon: { src:null, w:0.40, h:0.34 },
+};
+
+const imgs = new Map();
+function assetImage(key){
+  const a = ASSETS[key];
+  if (!a || !a.src) return null;
+  let e = imgs.get(key);
+  if (!e){
+    e = { img:new Image(), ok:false };
+    e.img.decoding = 'async';
+    e.img.onload = () => { e.ok = true; };
+    e.img.onerror = () => { e.ok = false; };   /* silently falls back to procedural */
+    e.img.src = a.src;
+    imgs.set(key, e);
+  }
+  return e.ok ? e.img : null;
+}
+
+/* Where each feature sits, in face-width units from the nose tip. */
+const LAYOUT = {
+  eyeX:0.215, eyeY:-0.115,
+  browX:0.215, browY:-0.255,
+  mouthY:0.235,
+};
+
+/* ── Procedural renderers ─────────────────────────────────────────────
+   All drawn centred on the origin in unit space, where 1 unit is the
+   measured face width, so a mask scales with the face instead of with
+   the screen. */
+function poly(ctx, pts, fill, stroke, lw){
+  ctx.beginPath();
+  pts.forEach((p,i) => i ? ctx.lineTo(p[0],p[1]) : ctx.moveTo(p[0],p[1]));
+  ctx.closePath();
+  if (fill){ ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke){ ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+
+const DRAW = {
+  base(ctx){
+    /* The carved plate. Proportioned off real landmark geometry rather than
+       drawn to taste: with the nose tip at the origin and the face width at
+       1 unit, the chin lands near +0.56 and the hairline near -0.62, so a
+       plate drawn much past either reads as a helmet instead of a face. */
+    ctx.beginPath();
+    ctx.moveTo(0,-0.62);
+    ctx.bezierCurveTo( 0.32,-0.62,  0.50,-0.42,  0.50,-0.14);
+    ctx.bezierCurveTo( 0.50, 0.10,  0.40, 0.30,  0.22, 0.44);
+    ctx.bezierCurveTo( 0.12, 0.52,  0.05, 0.56,  0.00, 0.56);
+    ctx.bezierCurveTo(-0.05, 0.56, -0.12, 0.52, -0.22, 0.44);
+    ctx.bezierCurveTo(-0.40, 0.30, -0.50, 0.10, -0.50,-0.14);
+    ctx.bezierCurveTo(-0.50,-0.42, -0.32,-0.62,  0.00,-0.62);
+    ctx.closePath();
+    ctx.fillStyle = TRIBE.bone; ctx.fill();
+    ctx.strokeStyle = TRIBE.ink; ctx.lineWidth = 0.018; ctx.stroke();
+
+    /* Everything below is clipped to the plate, so a band can run to the
+       silhouette without having to trace it. */
+    ctx.save(); ctx.clip();
+
+    /* Forehead band, inset from the silhouette and sitting above the brows
+       so the carved brow shape never lands on top of it. */
+    poly(ctx, [[-0.34,-0.48],[0.34,-0.48],[0.34,-0.41],[-0.34,-0.41]], TRIBE.indigo);
+    ctx.fillStyle = TRIBE.ochre;
+    for (let i=-2;i<=2;i++){
+      ctx.beginPath(); ctx.arc(i*0.11, -0.445, 0.016, 0, Math.PI*2); ctx.fill();
+    }
+
+    /* Nose ridge: the axis every feature mirrors across. The darker half
+       gives it a carved edge rather than a flat stripe. */
+    poly(ctx, [[-0.035,-0.26],[0.035,-0.26],[0.075,0.09],[0,0.15],[-0.075,0.09]], TRIBE.ochre);
+    poly(ctx, [[-0.035,-0.26],[0,-0.26],[0.03,0.11],[0,0.15]], 'rgba(0,0,0,.12)');
+
+    /* Cheek scarification, mirrored: three bars raking out and down from
+       beside the nose toward the jaw. */
+    for (const s of [-1,1]){
+      ctx.save(); ctx.scale(s,1);
+      const bars = [[0.235,0.02,TRIBE.clay],[0.255,0.11,TRIBE.ochre],[0.275,0.20,TRIBE.clay]];
+      for (const [x,y,c] of bars) poly(ctx, [[x,y],[x+0.075,y+0.035],[x+0.185,y+0.10],[x+0.11,y+0.065]], c, c, 0.035);
+      ctx.restore();
+    }
+
+    /* Chin chevrons, clear of the widest mouth shape above them. */
+    for (let i=0;i<2;i++){
+      const y = 0.415 + i*0.072, w = 0.155 - i*0.055;
+      poly(ctx, [[-w,y],[0,y+0.042],[w,y],[0,y+0.016]], i%2 ? TRIBE.jade : TRIBE.ink);
+    }
+
+    /* Temple dots, raked along the top edge on both sides. */
+    ctx.fillStyle = TRIBE.ink;
+    for (const s of [-1,1]) for (let i=0;i<3;i++){
+      ctx.beginPath(); ctx.arc(s*(0.415 - i*0.030), -0.34 + i*0.080, 0.017, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+  },
+
+  eye_triangle(ctx){
+    poly(ctx, [[0,-0.085],[0.10,0.085],[-0.10,0.085]], TRIBE.ink, TRIBE.bone, 0.012);
+    poly(ctx, [[0,-0.020],[0.045,0.055],[-0.045,0.055]], TRIBE.ochre);
+  },
+
+  eye_circle(ctx){
+    /* Closed: a struck disc, so the lid reads as deliberate carving. */
+    ctx.beginPath(); ctx.arc(0,0,0.10,0,Math.PI*2);
+    ctx.fillStyle = TRIBE.ink; ctx.fill();
+    ctx.strokeStyle = TRIBE.bone; ctx.lineWidth = 0.012; ctx.stroke();
+    ctx.beginPath(); ctx.arc(0,0,0.055,0,Math.PI*2);
+    ctx.fillStyle = TRIBE.clay; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-0.075,0); ctx.lineTo(0.075,0);
+    ctx.strokeStyle = TRIBE.bone; ctx.lineWidth = 0.016; ctx.stroke();
+  },
+
+  eye_square(ctx){
+    poly(ctx, [[-0.095,-0.095],[0.095,-0.095],[0.095,0.095],[-0.095,0.095]], TRIBE.ink, TRIBE.bone, 0.012);
+    poly(ctx, [[-0.048,-0.048],[0.048,-0.048],[0.048,0.048],[-0.048,0.048]], TRIBE.jade);
+    ctx.fillStyle = TRIBE.bone;
+    for (const s of [-1,1]) for (const t of [-1,1]){
+      ctx.beginPath(); ctx.arc(s*0.070, t*0.070, 0.011, 0, Math.PI*2); ctx.fill();
+    }
+  },
+
+  brow_flat(ctx){
+    poly(ctx, [[-0.13,-0.030],[0.13,-0.030],[0.13,0.030],[-0.13,0.030]], TRIBE.ink);
+    poly(ctx, [[-0.13,-0.030],[0.13,-0.030],[0.13,-0.012],[-0.13,-0.012]], TRIBE.indigo);
+  },
+
+  brow_angry(ctx){
+    /* Inverted V: the inner end drops toward the nose bridge. */
+    poly(ctx, [[-0.13,0.055],[0.13,-0.050],[0.13,0.012],[-0.13,0.060]], TRIBE.ink);
+    poly(ctx, [[0.02,-0.006],[0.13,-0.050],[0.13,-0.020],[0.02,0.020]], TRIBE.blood);
+  },
+
+  brow_arch(ctx){
+    /* Two quadratics with the ends offset as well as the peak, so the band
+       keeps its weight along its whole length instead of pinching to
+       nothing at the tips like the other two brows never do. */
+    ctx.beginPath();
+    ctx.moveTo(-0.13,0.062);
+    ctx.quadraticCurveTo(0,-0.105, 0.13,0.062);
+    ctx.lineTo(0.13,0.010);
+    ctx.quadraticCurveTo(0,-0.052,-0.13,0.010);
+    ctx.closePath();
+    ctx.fillStyle = TRIBE.ink; ctx.fill();
+    /* Zigzag riding the arch, the surprised register. */
+    ctx.beginPath();
+    for (let i=0;i<=6;i++){
+      const t = i/6, x = -0.115 + t*0.23;
+      const y = (0.030 - Math.sin(t*Math.PI)*0.070) + (i%2 ? 0.020 : 0);
+      i ? ctx.lineTo(x,y) : ctx.moveTo(x,y);
+    }
+    ctx.strokeStyle = TRIBE.ochre; ctx.lineWidth = 0.013; ctx.stroke();
+  },
+
+  mouth_diamond(ctx){
+    /* Neutral: a horizontal lozenge, wider than tall. */
+    poly(ctx, [[-0.17,0],[0,-0.075],[0.17,0],[0,0.075]], TRIBE.ink, TRIBE.bone, 0.012);
+    poly(ctx, [[-0.085,0],[0,-0.036],[0.085,0],[0,0.036]], TRIBE.clay);
+  },
+
+  mouth_oval(ctx){
+    ctx.beginPath(); ctx.ellipse(0,0,0.155,0.105,0,0,Math.PI*2);
+    ctx.fillStyle = TRIBE.ink; ctx.fill();
+    ctx.strokeStyle = TRIBE.bone; ctx.lineWidth = 0.012; ctx.stroke();
+    /* Crescent: a second ellipse lifted so the gap reads as an open mouth. */
+    ctx.beginPath(); ctx.ellipse(0,-0.055,0.135,0.080,0,0,Math.PI*2);
+    ctx.fillStyle = TRIBE.bone; ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0,0.020,0.095,0.048,0,0,Math.PI*2);
+    ctx.fillStyle = TRIBE.blood; ctx.fill();
+  },
+
+  mouth_hexagon(ctx){
+    const hx = [[-0.20,-0.055],[-0.105,-0.165],[0.105,-0.165],[0.20,-0.055],[0.105,0.165],[-0.105,0.165]];
+    poly(ctx, hx, TRIBE.ink, TRIBE.bone, 0.014);
+    ctx.save();
+    ctx.beginPath();
+    hx.forEach((p,i) => i ? ctx.lineTo(p[0],p[1]) : ctx.moveTo(p[0],p[1]));
+    ctx.closePath(); ctx.clip();
+    ctx.fillStyle = TRIBE.blood;
+    ctx.fillRect(-0.20,-0.02,0.40,0.19);
+    /* Teeth, top and bottom, mirrored about the axis. */
+    ctx.fillStyle = TRIBE.bone;
+    for (let i=-3;i<=3;i++){
+      ctx.beginPath();
+      ctx.moveTo(i*0.052 - 0.024,-0.115); ctx.lineTo(i*0.052 + 0.024,-0.115);
+      ctx.lineTo(i*0.052, -0.030); ctx.closePath(); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(i*0.052 - 0.024,0.165); ctx.lineTo(i*0.052 + 0.024,0.165);
+      ctx.lineTo(i*0.052, 0.075); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  },
+};
+
+function drawAsset(ctx, key){
+  const img = assetImage(key);
+  if (img){
+    const a = ASSETS[key];
+    ctx.drawImage(img, -a.w/2, -a.h/2, a.w, a.h);
+    return;
+  }
+  DRAW[key](ctx);
+}
+
+/* Draw one feature on both sides of the nose bridge. The right-hand copy
+   is a true mirror (scale(-1,1)), not a second placement, so the two can
+   never drift apart. */
+function drawMirrored(ctx, key, x, y){
+  for (const s of [1,-1]){
+    ctx.save(); ctx.translate(s*x, y); ctx.scale(s,1);
+    drawAsset(ctx, key);
+    ctx.restore();
+  }
+}
+
+/* ── Pose ─────────────────────────────────────────────────────────── */
+/* Normalised landmarks map through the same object-fit:cover arithmetic
+   the video is displayed with, or the mask sits off the face on any
+   viewport whose aspect differs from the camera's. */
+function mapPoint(p){
+  const s = Math.max(W/src.w, H/src.h);
+  const dw = src.w*s, dh = src.h*s;
+  const nx = src.mirror ? 1 - p.x : p.x;
+  return { x:(W-dw)/2 + nx*dw, y:(H-dh)/2 + p.y*dh };
+}
+
+/* Raw landmarks jitter by a pixel or two every frame, which on a mask that
+   is 400px wide reads as a shiver. One EMA on the three pose numbers is
+   enough to settle it without visible lag. */
+const SMOOTH = 0.35;
+const ema = (prev, next) => prev == null ? next : prev + (next - prev)*SMOOTH;
+
+function pose(lm){
+  const nose = mapPoint(lm[1]);
+  const a = mapPoint(lm[234]), b = mapPoint(lm[454]);
+  const width = Math.hypot(b.x - a.x, b.y - a.y);
+  const e1 = mapPoint(lm[33]), e2 = mapPoint(lm[263]);
+
+  /* The eye line is treated as an undirected axis and folded into
+     [-90°,90°]: that makes the roll independent of which landmark ends up
+     on which side once mirroring is applied, and the mask can never
+     snap upside down at a steep tilt. */
+  let roll = Math.atan2(e2.y - e1.y, e2.x - e1.x);
+  if (roll >  Math.PI/2) roll -= Math.PI;
+  if (roll < -Math.PI/2) roll += Math.PI;
+
+  if (!face) face = { x:nose.x, y:nose.y, w:width, roll };
+  else {
+    face.x = ema(face.x, nose.x);
+    face.y = ema(face.y, nose.y);
+    face.w = ema(face.w, width);
+    /* Interpolate the angle the short way round so ±90° doesn't spin. */
+    let d = roll - face.roll;
+    if (d >  Math.PI/2) d -= Math.PI;
+    if (d < -Math.PI/2) d += Math.PI;
+    face.roll += d*SMOOTH;
+  }
+}
+
+function paint(ctx){
+  if (!face) return;
+  ctx.save();
+  ctx.translate(face.x, face.y);
+  ctx.rotate(face.roll);
+  ctx.scale(face.w, face.w);          /* 1 unit = one face width */
+  ctx.lineJoin = 'round';
+
+  drawAsset(ctx, 'base');
+  drawMirrored(ctx, shapes.brows, LAYOUT.browX, LAYOUT.browY);
+  drawMirrored(ctx, shapes.eyes,  LAYOUT.eyeX,  LAYOUT.eyeY);
+  ctx.save(); ctx.translate(0, LAYOUT.mouthY); drawAsset(ctx, shapes.mouth); ctx.restore();
+
+  ctx.restore();
+}
+
+/* ── Canvas sizing ────────────────────────────────────────────────── */
+/* Capped at 2 rather than SPLIIIT's 3: this overlay is fully repainted
+   every frame on top of a live detector, and 3× on a large screen spends
+   the frame budget on pixels nobody can see. */
+function resize(){
+  const vw = innerWidth || document.documentElement.clientWidth || 0;
+  const vh = innerHeight || document.documentElement.clientHeight || 0;
+  if (vw < 2 || vh < 2) return;            /* iOS reports 0 mid-rotation */
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const nw = Math.round(vw*dpr), nh = Math.round(vh*dpr);
+  if (nw === W && nh === H) return;
+  W = nw; H = nh; mask.width = W; mask.height = H;
+}
+
+/* ── HUD ──────────────────────────────────────────────────────────── */
+const NAME = k => k.split('_')[1].toUpperCase();
+const n2 = v => v.toFixed(2).replace(/^0/,'');
+
+function syncHud(){
+  $('hudState').textContent = face ? 'Tracking' : 'Looking for a face';
+  if (!face){
+    $('vEyes').textContent = $('vBrows').textContent = $('vMouth').textContent = '—';
+    $('sEyes').textContent = $('sBrows').textContent = $('sMouth').textContent = '—';
+    return;
+  }
+  $('vEyes').textContent  = NAME(shapes.eyes);
+  $('vBrows').textContent = NAME(shapes.brows);
+  $('vMouth').textContent = NAME(shapes.mouth);
+  $('sEyes').textContent  = `blink ${n2(scores.blink)} · wide ${n2(scores.wide)}`;
+  $('sBrows').textContent = `down ${n2(scores.browDown)} · up ${n2(scores.browUp)}`;
+  $('sMouth').textContent = `jaw ${n2(scores.jaw)} · smile ${n2(scores.smile)}`;
+}
+
+function applyHud(){
+  $('hud').hidden = !S.hud;
+  const b = $('btnHud');
+  b.setAttribute('aria-pressed', String(S.hud));
+  b.setAttribute('aria-label', S.hud ? 'Hide readout' : 'Show readout');
+  press($('segHud'), 'hud', S.hud ? 'on' : 'off');
+}
+
+/* ── Loop ─────────────────────────────────────────────────────────── */
+let hudT = 0;
+function tick(){
+  requestAnimationFrame(tick);
+  resize();
+  mx.clearRect(0,0,W,H);              /* transparent, never black */
+
+  if (landmarker && src.ready && vid.readyState >= 2 && vid.currentTime !== lastVideoTime){
+    lastVideoTime = vid.currentTime;
+    let res = null;
+    try{ res = landmarker.detectForVideo(vid, performance.now()); } catch(e){ res = null; }
+    const lm = res && res.faceLandmarks && res.faceLandmarks[0];
+    if (lm && lm.length > 454){
+      const cats = res.faceBlendshapes && res.faceBlendshapes[0] && res.faceBlendshapes[0].categories;
+      if (cats){
+        const b = Object.create(null);
+        for (const c of cats) b[c.categoryName] = c.score;
+        quantize(b);
+      }
+      pose(lm);
+    } else {
+      face = null;
+    }
+    document.body.classList.toggle('tracking', !!face);
+  }
+
+  paint(mx);
+
+  /* The readout is text in the DOM; repainting it at 60fps is wasted work
+     and makes the numbers unreadable anyway. */
+  const now = performance.now();
+  if (S.hud && now - hudT > 100){ hudT = now; syncHud(); }
+}
+
+/* ── Capture ──────────────────────────────────────────────────────── */
+function composite(){
+  const k = Math.min(1, SHOT_MAX_LONG/Math.max(W,H));
+  const ew = Math.max(1, Math.round(W*k)), eh = Math.max(1, Math.round(H*k));
+  const c = document.createElement('canvas');
+  c.width = ew; c.height = eh;
+  const x = c.getContext('2d');
+
+  /* Same cover arithmetic and the same mirror the display uses, or the
+     saved frame won't match what was on screen when it was taken. */
+  const s = Math.max(ew/src.w, eh/src.h);
+  const dw = src.w*s, dh = src.h*s, ox = (ew-dw)/2, oy = (eh-dh)/2;
+  if (src.mirror){ x.save(); x.translate(ew,0); x.scale(-1,1); x.drawImage(vid,ox,oy,dw,dh); x.restore(); }
+  else x.drawImage(vid,ox,oy,dw,dh);
+
+  x.drawImage(mask, 0, 0, ew, eh);
+  return c.toDataURL('image/png');
+}
+
+const stamp = at => {
+  const d = new Date(at);
+  const p = n => String(n).padStart(2,'0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+async function capture(){
+  if (busy) return;
+  if (!src.ready) return snack('Camera isn’t running yet.', 2000);
+  if (!face) return snack('No face tracked — look at the camera and try again.', 2600);
+
+  busy = true;
+  const sh = $('shutter');
+  sh.classList.add('busy'); sh.disabled = true;
+  try{
+    const png = composite();
+    const at = Date.now();
+    shots.unshift({ id:String(at), at, png, eyes:shapes.eyes, brows:shapes.brows, mouth:shapes.mouth });
+    persist();
+    refreshRoll();
+    snack('Mask saved to gallery.', 1600);
+  } catch(e){
+    snack('Couldn’t save that frame. Try again.', 3000);
+  } finally{
+    /* Held long enough that the core's morph is legible as feedback. */
+    setTimeout(() => { sh.classList.remove('busy'); sh.disabled = false; busy = false; }, 260);
+  }
+}
+
+/* ── Gallery ──────────────────────────────────────────────────────── */
+const totalMB = () => (shots.reduce((n,s) => n + s.png.length, 0)/1048576).toFixed(1);
+
+function refreshRoll(){
+  const n = shots.length;
+  const btn = $('btnRoll');
+  btn.hidden = n < 1;
+  if (n){
+    $('rollBadge').textContent = String(n);
+    btn.querySelector('img').src = shots[0].png;
+  }
+  $('rollCount').textContent = n ? `${n} · ${totalMB()} MB` : '';
+  $('oShots').textContent = n ? `${n} · ${totalMB()} MB` : 'empty';
+  $('tuneClear').disabled = n < 1;
+  $('tuneRoll').disabled = n < 1;
+
+  const ul = $('shots');
+  ul.textContent = '';
+  for (const s of shots){
+    const li = document.createElement('li');
+    li.className = 'shot';
+    li.innerHTML =
+      `<span class="face"><img src="${s.png}" alt="Mask captured at ${stamp(s.at)}">`
+      + `<span class="when">${stamp(s.at)}</span></span>`
+      + `<span class="shot-acts">`
+      + `<button class="cpill" data-act="get" aria-label="Download PNG">${svg('download')}Save</button>`
+      + `<button class="cpill danger" data-act="del" aria-label="Delete mask">${svg('delete')}</button>`
+      + `</span>`;
+    li.querySelector('[data-act="get"]').addEventListener('click', () => download(s));
+    li.querySelector('[data-act="del"]').addEventListener('click', () => remove(s.id));
+    ul.appendChild(li);
+  }
+}
+
+function download(s){
+  const a = document.createElement('a');
+  a.href = s.png;
+  a.download = `ditongo-mask-${s.id}.png`;
+  a.click();
+  snack('PNG downloaded.', 1600);
+}
+
+function remove(id){
+  shots = shots.filter(s => s.id !== id);
+  writeShots(shots);
+  refreshRoll();
+  if (!shots.length) closeSheets();
+  snack('Mask deleted.', 1400);
+}
+
+/* ── Sheets ───────────────────────────────────────────────────────── */
+function openSheet(id){
+  closeSheets();
+  $(id).classList.add('on');
+  $('scrim').classList.add('on');
+  document.body.classList.add('sheet-open');
+}
+function closeSheets(){
+  document.querySelectorAll('.sheet').forEach(s => s.classList.remove('on'));
+  $('scrim').classList.remove('on');
+  document.body.classList.remove('sheet-open');
+}
+
+$('scrim').addEventListener('click', closeSheets);
+$('btnTune').addEventListener('click', () => openSheet('sheetTune'));
+$('tuneDone').addEventListener('click', closeSheets);
+$('rollDone').addEventListener('click', closeSheets);
+$('rollX').addEventListener('click', closeSheets);
+$('btnRoll').addEventListener('click', () => openSheet('sheetRoll'));
+$('tuneRoll').addEventListener('click', () => openSheet('sheetRoll'));
+$('shutter').addEventListener('click', capture);
+
+/* Two taps, because there is no undo and the masks only exist here. The arm
+   lapses on its own so a stray first tap can't sit waiting to fire. */
+let armed = 0;
+$('tuneClear').addEventListener('click', e => {
+  if (!shots.length) return;
+  const b = e.currentTarget;
+  if (!armed){
+    armed = setTimeout(() => { armed = 0; b.textContent = 'Clear all'; }, 3000);
+    b.textContent = 'Tap again to clear';
+    return;
+  }
+  clearTimeout(armed); armed = 0; b.textContent = 'Clear all';
+  shots = []; writeShots(shots); warnedFull = false;
+  refreshRoll(); snack('Gallery cleared.', 1400);
+});
+
+$('btnHud').addEventListener('click', () => { S.hud = !S.hud; saveHud(S.hud); applyHud(); syncHud(); });
+$('segHud').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  S.hud = b.dataset.hud === 'on'; saveHud(S.hud); applyHud(); syncHud();
+});
+
+/* ── Camera ───────────────────────────────────────────────────────── */
+async function startCamera(facing = S.facing){
+  if (src.stream) src.stream.getTracks().forEach(t => t.stop());
+  src.ready = false;
+  try{
+    /* audio:false is explicit so the splash copy's promise is the literal
+       request the browser makes. */
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:facing, width:{ideal:1280}, height:{ideal:720} }, audio:false,
+    });
+    src.stream = stream;
+    S.facing = facing;
+    src.mirror = (facing === 'user');
+    document.body.classList.toggle('mirror', src.mirror);
+    vid.srcObject = stream;
+    await vid.play();
+    await new Promise(res => {
+      if (vid.videoWidth) return res();
+      vid.addEventListener('loadedmetadata', res, { once:true });
+    });
+    src.w = vid.videoWidth; src.h = vid.videoHeight;
+    if (!src.w) throw new Error('NoFrames');
+    src.ready = true;
+    lastVideoTime = -1;
+    face = null;
+  } catch(e){
+    const n = e && e.name;
+    snack(
+      n === 'NotAllowedError'  ? 'Camera blocked. Safari ▸ aA ▸ Website Settings ▸ Camera ▸ Allow.'
+    : n === 'NotFoundError'    ? 'No camera on this device.'
+    : n === 'NotReadableError' ? 'Camera busy — close other apps using it.'
+    : e && e.message === 'NoFrames' ? 'Camera sent no frames. Reload and retry.'
+    : 'Couldn’t open camera: ' + (n || 'unknown'), 5000);
+  }
+}
+
+$('btnFlip').addEventListener('click', () => startCamera(S.facing === 'user' ? 'environment' : 'user'));
+
+/* ── MediaPipe ────────────────────────────────────────────────────── */
+async function startTracking(){
+  try{
+    const vision = await FilesetResolver.forVisionTasks(
+      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm');
+    landmarker = await FaceLandmarker.createFromOptions(vision, {
+      baseOptions:{
+        modelAssetPath:'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+        delegate:'GPU',
+      },
+      runningMode:'VIDEO',
+      outputFaceBlendshapes:true,
+      numFaces:1,
+    });
+  } catch(e){
+    snack('Face tracking failed to load. Check the connection and reload.', 5000);
+  }
+}
+
+/* ── Splash gate ──────────────────────────────────────────────────────
+   Firing the camera on the first line is right on every visit but the
+   first, where a bare OS prompt arrives with nothing on screen to explain
+   what asked or why — the easiest possible thing to deny, and on iOS a
+   denial is sticky enough that the app stays broken until someone digs
+   through Safari's site settings. So the gate goes first and Continue is
+   what actually triggers the prompt. */
+function showSplash(){
+  const el = $('splash'), go = $('splashGo');
+  el.hidden = false;
+  requestAnimationFrame(() => el.classList.add('on'));
+  go.focus({ preventScroll:true });
+  el.addEventListener('keydown', e => { if (e.key === 'Tab'){ e.preventDefault(); go.focus(); } });
+  go.addEventListener('click', () => {
+    markSeen();
+    el.classList.remove('on');
+    setTimeout(() => { el.hidden = true; }, 260);   /* after the .24s fade */
+    startCamera();
+  }, { once:true });
+}
+
+/* ── Boot ─────────────────────────────────────────────────────────── */
+addEventListener('resize', resize);
+document.addEventListener('visibilitychange', () => { lastVideoTime = -1; });
+
+S.hud = loadHud();
+resize();
+applyHud();
+syncHud();
+refreshRoll();
+requestAnimationFrame(tick);
+
+startTracking();
+if (seenSplash()) startCamera();
+else showSplash();
+
+window.__masks = {
+  S, src, shots, ASSETS, TRIBE, T, LAYOUT,
+  get face(){ return face; }, get shapes(){ return shapes; }, get scores(){ return scores; },
+  get W(){ return W; }, get H(){ return H; },
+  composite, refreshRoll, openSheet, closeSheets, snack, quantize,
+  /* Drive the compositor without a camera: the detector only overwrites
+     `face` when a frame actually arrives, so an injected pose survives. */
+  fake(p, s){
+    face = Object.assign({ x:W/2, y:H/2, w:W*0.34, roll:0 }, p || {});
+    if (s) Object.assign(shapes, s);
+    syncHud();
+    return face;
+  },
+  /* Repaint on the spot. The loop is driven by requestAnimationFrame, which
+     a hidden tab pauses, so tests can't rely on it firing. */
+  render(){ mx.clearRect(0,0,W,H); paint(mx); },
+};
+</script>
+</body>
+</html>
